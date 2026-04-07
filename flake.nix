@@ -11,6 +11,10 @@
         "aarch64-darwin"
       ];
 
+      transposition.lib = {
+        adHoc = true;
+      };
+
       perSystem =
         {
           pkgs,
@@ -18,6 +22,9 @@
           self',
           ...
         }:
+        let
+          florestaBuild = import ./lib/floresta-build.nix { inherit pkgs; };
+        in
         {
           _module.args.pkgs = import inputs.nixpkgs { inherit system; };
 
@@ -40,19 +47,17 @@
             };
           };
 
-          packages =
-            let
-              florestaBuild = import ./lib/floresta-build.nix { inherit pkgs; };
-            in
-            {
-              inherit (florestaBuild)
-                florestad
-                floresta-cli
-                libfloresta
-                floresta-debug
-                default
-                ;
-            };
+          lib = { inherit florestaBuild; };
+
+          packages = {
+            inherit (florestaBuild)
+              florestad
+              floresta-cli
+              libfloresta
+              floresta-debug
+              default
+              ;
+          };
 
           devShells.default = pkgs.mkShell {
             inherit (self'.checks.nix-sanity-check) shellHook;
@@ -62,13 +67,6 @@
             ];
           };
         };
-
-      flake = {
-        # Without defined pkgs
-        lib = {
-          florestaBuild = import ./lib/floresta-build.nix;
-        };
-      };
     };
 
   inputs = {
