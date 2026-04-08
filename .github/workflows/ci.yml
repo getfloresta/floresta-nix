@@ -31,6 +31,9 @@ jobs:
       - name: Nix flake check
         run: nix flake check -L
 
+      - name: Verify consumer integration
+        run: nix flake check ./examples -L --no-build
+
   build:
     name: ${{ matrix.package }} (${{ matrix.system }})
     needs: nix-sanity-check
