@@ -5,6 +5,8 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  schedule:
+    - cron: "0 6 * * 1" # Every Monday at 06:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -12,143 +14,60 @@ jobs:
     name: Nix Sanity Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: cachix/install-nix-action@v27
+      - uses: cachix/install-nix-action@v31
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
             accept-flake-config = true
 
-      - uses: cachix/cachix-action@v15
+      - uses: cachix/cachix-action@v16
         with:
           name: floresta-flake
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
           skipPush: ${{ github.event_name == 'pull_request' }}
 
-      - uses: extractions/setup-just@v2
+      - name: Nix flake check
+        run: nix flake check -L
 
-      - name: nix sanity check
-        run: just check
-
-  build-matrix:
-    name: Build ${{ matrix.package }} on ${{ matrix.system }}
+  build:
+    name: ${{ matrix.package }} (${{ matrix.system }})
     needs: nix-sanity-check
     strategy:
       fail-fast: false
       matrix:
-        package:
-          - florestad
-          - floresta-cli
-          - libfloresta
-          - default
-        system:
-          - x86_64-linux
-          # - aarch64-linux
-          # - x86_64-darwin
-          # - aarch64-darwin
-    runs-on: ${{ (contains(matrix.system, 'darwin') && 'macos-14') || (matrix.system == 'aarch64-linux' && 'ubuntu-latest-arm64') || 'ubuntu-latest' }}
+        package: [florestad, floresta-cli, libfloresta, default]
+        system: [x86_64-linux, x86_64-darwin, aarch64-linux, aarch64-darwin]
+        exclude:
+          - system: aarch64-linux
+            package: libfloresta
+          - system: aarch64-linux
+            package: default
+          - system: aarch64-darwin
+            package: libfloresta
+          - system: aarch64-darwin
+            package: default
+    runs-on: >-
+      ${{
+        contains(matrix.system, 'darwin') && 'macos-14' ||
+        matrix.system == 'aarch64-linux' && 'ubuntu-24.04-arm' ||
+        'ubuntu-latest'
+      }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: cachix/install-nix-action@v27
+      - uses: cachix/install-nix-action@v31
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
             accept-flake-config = true
 
-      - uses: cachix/cachix-action@v15
+      - uses: cachix/cachix-action@v16
         with:
           name: floresta-flake
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-          # skipPush: ${{ github.event_name == 'pull_request' }}
-
-      - uses: extractions/setup-just@v2
+          skipPush: ${{ github.event_name == 'pull_request' }}
 
       - name: Build ${{ matrix.package }}
-        run: just build ${{ matrix.package }}
-
-  build-binaries:
-    name: Build Release Binaries
-    needs: build-matrix
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    strategy:
-      matrix:
-        include:
-          - system: x86_64-linux
-            runner: ubuntu-latest
-            package: florestad
-
-          - system: x86_64-linux
-            runner: ubuntu-latest
-            package: floresta-cli
-
-          - system: aarch64-linux
-            runner: ubuntu-latest-arm64
-            package: florestad
-
-          - system: aarch64-linux
-            runner: ubuntu-latest-arm64
-            package: floresta-cli
-
-          - system: x86_64-darwin
-            runner: macos-14
-            package: florestad
-
-          - system: x86_64-darwin
-            runner: macos-14
-            package: floresta-cli
-
-          - system: aarch64-darwin
-            runner: macos-14
-            package: florestad
-
-          - system: aarch64-darwin
-            runner: macos-14
-            package: floresta-cli
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: cachix/install-nix-action@v27
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-
-      - uses: cachix/cachix-action@v15
-        with:
-          name: floresta-flake
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-
-      - uses: extractions/setup-just@v2
-
-      - name: Build and package ${{ matrix.package }}
-        run: |
-          just build ${{ matrix.package }}
-          just _package-binary ${{ matrix.package }} ${{ matrix.system }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.package }}-${{ matrix.system }}
-          path: artifacts/${{ matrix.package }}-${{ matrix.system }}
-          retention-days: 30
-
-  summary:
-    name: CI Summary
-    needs: [nix-sanity-check, build-matrix, build-binaries]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check results
-        run: |
-          if [ "${{ needs.nix-sanity-check.result }}" != "success" ]; then
-            echo "❌ Nix sanity check failed"
-            exit 1
-          fi
-          if [ "${{ needs.build-matrix.result }}" != "success" ]; then
-            echo "❌ Build matrix failed"
-            exit 1
-          fi
-          echo "✅ All checks passed!"
+        run: nix build -L .#${{ matrix.package }}
