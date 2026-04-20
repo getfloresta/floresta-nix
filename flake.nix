@@ -3,13 +3,16 @@
 
   outputs =
     inputs@{ flake-parts, ... }:
-    flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = [
+    let
+      supportedSystems = [
         "x86_64-linux"
         "aarch64-linux"
         "x86_64-darwin"
         "aarch64-darwin"
       ];
+    in
+    flake-parts.lib.mkFlake { inherit inputs; } {
+      systems = supportedSystems;
 
       perSystem =
         {
@@ -36,7 +39,6 @@
               deadnix.enable = true;
               nil.enable = true;
               statix.enable = true;
-              flake-checker.enable = true;
             };
           };
 
@@ -63,12 +65,6 @@
           };
         };
 
-      flake = {
-        # Without defined pkgs
-        lib = {
-          florestaBuild = import ./lib/floresta-build.nix;
-        };
-      };
     };
 
   inputs = {
