@@ -34,3 +34,7 @@ build-and-package-all:
 # Clean build artifacts
 clean:
     rm -rf result artifacts
+
+update:
+    nix flake update --flake ./examples/
+    nix flake update

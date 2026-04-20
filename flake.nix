@@ -35,7 +35,7 @@
               ];
             };
             hooks = {
-              nixfmt-rfc-style.enable = true;
+              nixfmt.enable = true;
               deadnix.enable = true;
               nil.enable = true;
               statix.enable = true;
@@ -60,7 +60,7 @@
             inherit (self'.checks.nix-sanity-check) shellHook;
             packages = with pkgs; [
               nil
-              nixfmt-rfc-style
+              nixfmt
             ];
           };
         };
@@ -74,7 +74,6 @@
 
     pre-commit-hooks = {
       url = "github:cachix/git-hooks.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 }
