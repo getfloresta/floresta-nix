@@ -44,7 +44,7 @@ Pull requests need to be reviewed by at least one maintainer. We follow the same
 
 This is a Nix-only repository. All `.nix` files must pass the pre-commit hooks enforced by CI and offered by the checks in the devshell:
 
-- **nixfmt-rfc-style**: formatting
+- **nixfmt**: formatting
 - **deadnix**: unused code detection
 - **nil**: Nix language diagnostics
 - **statix**: anti-pattern linting
