@@ -5,6 +5,7 @@ default:
 # Run all nix sanity checks
 check:
     nix flake check -L
+    nix flake check ./examples -L --no-build
 
 # Build a specific package, receives the package name.
 build package="default":

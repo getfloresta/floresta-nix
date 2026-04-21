@@ -55,6 +55,47 @@ See [`examples/flake.nix`](examples/flake.nix) for a multi-platform example usin
 | `extraBuildInputs` | list of package | `[]`                   | Extra build-time dependencies                                                 |
 | `doCheck`          | bool            | `true`                 | Run tests during build                                                        |
 
+## NixOS Service Module
+
+This flake exports a NixOS module at `nixosModules.floresta` (also `nixosModules.default`) that provides a systemd service for running florestad.
+
+See [`examples/flake.nix`](examples/flake.nix) for usage alongside the build library.
+
+### Service options
+
+| Option                      | Type         | Default             | Description                                        |
+| --------------------------- | ------------ | ------------------- | -------------------------------------------------- |
+| `enable`                    | bool         | `false`             | Enable the Floresta systemd service                |
+| `allowV1Fallback`           | bool         | `false`             | Allow fallback to v1 P2P transport                 |
+| `assumeUtreexo`             | bool         | `true`              | Use assume-utreexo for faster initial sync         |
+| `assumeValid`               | str          | `"hardcoded"`       | `"hardcoded"`, `"0"` (disabled), or a block hash   |
+| `backfill`                  | bool         | `true`              | Backfill blocks skipped during assume-utreexo sync |
+| `cfilters`                  | bool         | `true`              | Build compact block filters (BIP 157/158)          |
+| `connect`                   | str or null  | `null`              | Connect only to this specific node                 |
+| `dataDir`                   | path         | `/var/lib/floresta` | Directory for chain and wallet data                |
+| `debug`                     | bool         | `false`             | Enable verbose debug logging                       |
+| `disableDnsSeeds`           | bool         | `false`             | Disable DNS seed discovery                         |
+| `electrum.address`          | str or null  | `null`              | Electrum server listen address                     |
+| `electrum.tls.enable`       | bool         | `false`             | Enable Electrum TLS                                |
+| `electrum.tls.address`      | str or null  | `null`              | Electrum TLS listen address                        |
+| `electrum.tls.certPath`     | path or null | `null`              | TLS certificate path                               |
+| `electrum.tls.keyPath`      | path or null | `null`              | TLS private key path                               |
+| `electrum.tls.generateCert` | bool         | `false`             | Auto-generate self-signed certificate              |
+| `extraArgs`                 | list of str  | `[]`                | Extra CLI arguments passed to florestad            |
+| `filtersStartHeight`        | int or null  | `null`              | Block height to start downloading filters from     |
+| `group`                     | str          | `"floresta"`        | Group under which floresta runs                    |
+| `logToFile`                 | bool         | `false`             | Write logs to file in data directory               |
+| `network`                   | enum         | `"bitcoin"`         | `"bitcoin"`, `"signet"`, or `"regtest"`            |
+| `package`                   | package      | `pkgs.floresta`     | The florestad package to use                       |
+| `proxy`                     | str or null  | `null`              | SOCKS5 proxy (e.g. Tor)                            |
+| `rpc.address`               | str or null  | `null`              | JSON-RPC server address (host:port)                |
+| `user`                      | str          | `"floresta"`        | User under which floresta runs                     |
+| `walletDescriptors`         | list of str  | `[]`                | Output descriptors to watch                        |
+| `walletXpubs`               | list of str  | `[]`                | Extended public keys to watch                      |
+| `zmqAddress`                | str or null  | `null`              | ZMQ push/pull server address                       |
+
+The service includes systemd hardening (sandboxing, restricted syscalls, private tmp, etc.) out of the box.
+
 ## CI
 
 All packages are built across every supported platform on each push and PR. Builds are cached on [Cachix](https://app.cachix.org/cache/floresta-flake), dependencies are tracked by Dependabot, and a weekly scheduled build catches upstream breakage early.
