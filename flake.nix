@@ -14,6 +14,13 @@
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = supportedSystems;
 
+      flake = {
+        nixosModules = {
+          floresta = import ./lib/floresta-service.nix;
+          default = inputs.self.nixosModules.floresta;
+        };
+      };
+
       perSystem =
         {
           pkgs,
@@ -24,21 +31,36 @@
         {
           _module.args.pkgs = import inputs.nixpkgs { inherit system; };
 
-          checks.nix-sanity-check = inputs.pre-commit-hooks.lib.${system}.run {
-            src = pkgs.lib.fileset.toSource {
-              root = ./.;
-              fileset = pkgs.lib.fileset.unions [
-                ./lib/floresta-build.nix
-                # ./lib/floresta-service.nix
-                ./flake.nix
-                ./flake.lock
-              ];
+          checks = {
+            nix-sanity-check = inputs.pre-commit-hooks.lib.${system}.run {
+              src = pkgs.lib.fileset.toSource {
+                root = ./.;
+                fileset = pkgs.lib.fileset.unions [
+                  ./lib/floresta-build.nix
+                  ./lib/floresta-service.nix
+                  ./lib/floresta-service-eval-test.nix
+                  ./lib/floresta-service-vm-test.nix
+                  ./flake.nix
+                  ./flake.lock
+                ];
+              };
+              hooks = {
+                nixfmt.enable = true;
+                deadnix.enable = true;
+                nil.enable = true;
+                statix.enable = true;
+              };
             };
-            hooks = {
-              nixfmt.enable = true;
-              deadnix.enable = true;
-              nil.enable = true;
-              statix.enable = true;
+
+            service-eval-test = import ./lib/floresta-service-eval-test.nix {
+              inherit pkgs;
+              flakeInputs = inputs;
+            };
+          }
+          // pkgs.lib.optionalAttrs pkgs.hostPlatform.isLinux {
+            service-vm-test = import ./lib/floresta-service-vm-test.nix {
+              inherit pkgs;
+              flakeInputs = inputs;
             };
           };
 
