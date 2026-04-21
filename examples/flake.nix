@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
 # Example consumer flake — shows how to use floresta-nix's build library
 # and NixOS service module.
 # Used in CI to verify the consumer integration interface.

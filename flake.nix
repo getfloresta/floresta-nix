@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
 {
   description = "Nix & Flake packaging support for the Floresta node and library";
 

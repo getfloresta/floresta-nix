@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
 {
   pkgs ? import <nixpkgs> { },
   lib ? pkgs.lib,
@@ -223,7 +225,10 @@ let
       meta = with lib; {
         description = "A lightweight bitcoin full node - ${pkgConfig.description}";
         homepage = "https://github.com/vinteumorg/Floresta";
-        license = licenses.mit;
+        license = with licenses; [
+          mit
+          asl20
+        ];
         maintainers = with maintainers; [ jaoleal ];
         platforms = platforms.unix ++ platforms.windows;
         mainProgram = pkgConfig.pname;

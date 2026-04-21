@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
 # NixOS VM integration test for floresta-service.nix
 # Boots a VM, starts the floresta service, and verifies systemd integration.
 # Linux only.
