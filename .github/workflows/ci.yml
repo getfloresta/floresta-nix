@@ -34,6 +34,37 @@ jobs:
       - name: Verify consumer integration
         run: nix flake check ./examples -L --no-build
 
+  service-tests:
+    name: Service Module Tests
+    needs: nix-sanity-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: floresta-flake
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+          skipPush: ${{ github.event_name == 'pull_request' }}
+
+      - name: Run eval tests
+        run: nix build -L .#checks.x86_64-linux.service-eval-test
+
+      - name: Run VM integration test
+        run: nix build -L .#checks.x86_64-linux.service-vm-test
+
   build:
     name: ${{ matrix.package }} (${{ matrix.system }})
     needs: nix-sanity-check
