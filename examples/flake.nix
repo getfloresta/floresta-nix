@@ -33,30 +33,36 @@
       );
 
       # NixOS service example (linux only)
-      nixosExample = {
-        nixosConfigurations.example = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
-          modules = [
-            floresta-nix.nixosModules.floresta
-            {
-              services.floresta = {
-                enable = true;
-                network = "signet";
-                electrum.address = "127.0.0.1:50001";
-                rpc.address = "127.0.0.1:38332";
-              };
+      nixosExample =
+        let
+          pkgs = import nixpkgs { system = "x86_64-linux"; };
+          florestaBuild = import "${floresta-nix}/lib/floresta-build.nix" { inherit pkgs; };
+        in
+        {
+          nixosConfigurations.example = nixpkgs.lib.nixosSystem {
+            system = "x86_64-linux";
+            modules = [
+              floresta-nix.nixosModules.floresta
+              {
+                services.floresta = {
+                  enable = true;
+                  package = florestaBuild.florestad;
+                  network = "signet";
+                  electrum.address = "127.0.0.1:50001";
+                  rpc.address = "127.0.0.1:38332";
+                };
 
-              # Minimal config to make nixosSystem evaluate
-              boot.loader.grub.devices = [ "nodev" ];
-              fileSystems."/" = {
-                device = "none";
-                fsType = "tmpfs";
-              };
-              system.stateVersion = "25.05";
-            }
-          ];
+                # Minimal config to make nixosSystem evaluate
+                boot.loader.grub.devices = [ "nodev" ];
+                fileSystems."/" = {
+                  device = "none";
+                  fsType = "tmpfs";
+                };
+                system.stateVersion = "25.05";
+              }
+            ];
+          };
         };
-      };
     in
     perSystem // nixosExample;
 }
