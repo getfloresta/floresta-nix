@@ -96,6 +96,95 @@ See [`examples/flake.nix`](examples/flake.nix) for usage alongside the build lib
 
 The service includes systemd hardening (sandboxing, restricted syscalls, private tmp, etc.) out of the box.
 
+## Release Verification
+
+Floresta uses a multi-builder attestation system to provide cryptographic proof
+that multiple independent builders produce identical binaries. This gives users
+confidence that the binaries they download match what the source code produces.
+
+### How it works
+
+The system mirrors Bitcoin Core's Guix build verification workflow:
+
+1. **Each builder independently compiles** the release from the same tagged source
+   commit, producing binaries for all target platforms.
+
+2. **Each builder hashes** their binaries using SHA256 and records the hashes
+   in a `SHA256SUMS` file.
+
+3. **Each builder signs** their `SHA256SUMS` file with their GPG key,
+   producing a `SHA256SUMS.asc` detached signature.
+
+4. **All signatures are collected** in the
+   [floresta.sigs](https://github.com/getfloresta/floresta.sigs) repository.
+
+5. **Users verify** by checking that all trusted signers agree on the same
+   hashes. Any mismatch indicates a problem.
+
+### Verifying a release
+
+Ensure `floresta.sigs` is cloned adjacent to `floresta-nix`, then run:
+
+```bash
+cd floresta-nix
+./contrib/floresta-verify v0.9.0
+```
+
+The script will import trusted GPG keys, verify each signature, and check that
+all valid signers report identical hashes.
+
+Example output:
+
+```
+Importing trusted keys...
+  OK   jaoleal
+  OK   contributor2
+
+Checking signatures for v0.9.0...
+  OK   jaoleal (key: ABCD1234...)
+  OK   contributor2 (key: EF567890...)
+
+Valid signers: 2
+
+Checking consensus...
+  OK   florestad-x86_64-linux       abc123... (2/2 agree)
+  OK   florestad-aarch64-linux      def456... (2/2 agree)
+  OK   floresta-cli-x86_64-linux    789abc... (2/2 agree)
+  OK   floresta-cli-aarch64-linux   fed321... (2/2 agree)
+
+All 2 signers agree. Release verified.
+```
+
+### Becoming a signer
+
+1. Add your GPG public key to `contrib/trusted-keys/yourname.asc` via PR
+
+2. Clone the release tag and run the attestation script:
+
+```bash
+git clone https://github.com/getfloresta/floresta-nix
+cd floresta-nix
+git checkout v0.9.0
+./contrib/floresta-attest v0.9.0 yourname
+```
+
+3. Copy the output to your `floresta.sigs` clone and submit a PR:
+
+```bash
+cp -r sigs/v0.9.0/yourname ./floresta.sigs/v0.9.0/
+cd ../floresta.sigs
+git checkout -b attest/v0.9.0/yourname
+git add v0.9.0/yourname
+git commit -m "sign: attest v0.9.0 as yourname"
+gh pr create
+```
+
+### Trusted keys
+
+The `contrib/trusted-keys/` directory (imported as a submodule from
+`floresta.sigs`) contains GPG public keys for all authorized signers.
+A signature is only valid if it comes from a key in this list.
+
 ## CI
 
 All packages are built across every supported platform on each push and PR. Builds are cached on [Cachix](https://app.cachix.org/cache/floresta-flake), dependencies are tracked by Dependabot, and a weekly scheduled build catches upstream breakage early.
