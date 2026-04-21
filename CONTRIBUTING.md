@@ -49,17 +49,26 @@ This is a Nix-only repository. All `.nix` files must pass the pre-commit hooks e
 - **nil**: Nix language diagnostics
 - **statix**: anti-pattern linting
 
-You can run them locally by entering the dev shell:
+All tools used in the project, including `just`, are provided by the dev shell. We strongly recommend using it to ensure your environment matches CI:
 
 ```sh
 nix develop
 ```
 
-The hooks run automatically on each commit via the shell hook.
+If you use [direnv](https://direnv.net/), the `.envrc` is already set up — just run `direnv allow` and the environment will activate automatically when you enter the directory.
+
+The dev shell also installs pre-commit hooks that automatically run nixfmt, deadnix, nil, and statix on every commit, catching issues before they reach CI.
 
 ## Testing
 
-Before submitting, make sure `nix flake check` passes. If your change affects the build library, verify that `examples/flake.nix` still evaluates correctly.
+The minimum requirement for a PR to be considered for merge is that the following just recipes pass:
+
+```sh
+just check
+just build
+```
+
+This runs all linters, eval tests, and builds the default package. If your change affects the service module or build library, also verify that the example flake still evaluates correctly.
 
 ## LLM and AI Agent Usage
 

@@ -83,6 +83,7 @@
             packages = with pkgs; [
               nil
               nixfmt
+              just
             ];
           };
         };
