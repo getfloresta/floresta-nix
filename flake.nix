@@ -44,6 +44,9 @@
                   ./lib/floresta-service-vm-test.nix
                   ./flake.nix
                   ./flake.lock
+                  ./contrib/floresta-attest
+                  ./contrib/floresta-verify
+                  ./contrib/import-keys.sh
                 ];
               };
               hooks = {
@@ -51,6 +54,7 @@
                 deadnix.enable = true;
                 nil.enable = true;
                 statix.enable = true;
+                shellcheck.enable = true;
               };
             };
 
@@ -86,6 +90,8 @@
               nil
               nixfmt
               just
+              shellcheck
+              shfmt
             ];
           };
         };

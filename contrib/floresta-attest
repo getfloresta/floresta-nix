@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# floresta-attest — produce a signed attestation for a Floresta release.
+#
+# PURPOSE
+#
+# This script allows independent builders to cryptographically attest that
+# they built the release from the tagged source. Each builder:
+#   1. Builds the binaries for all target platforms
+#   2. Computes SHA256 hashes of each binary (not store paths)
+#   3. Signs the hash list with their GPG key
+#
+# The signed attestations are collected in floresta.sigs, where verifiers
+# can check that all signers agree on the same hashes.
+#
+# USAGE
+#
+#   ./floresta-attest <version> <signer-name>
+#
+# Arguments:
+#   version     - The release tag, e.g. v0.9.0
+#   signer-name - Your identifier (must match your GPG key uid)
+#
+# OUTPUT
+#
+#   sigs/<version>/<signer-name>/
+#     SHA256SUMS      - Hashes of each binary, one per line
+#     SHA256SUMS.asc  - GPG detached signature over SHA256SUMS
+#     florestad-*     - The binary files (for reference)
+#     floresta-cli-*  - The binary files (for reference)
+#
+# PREREQUISITES
+#
+#   - nix with flakes enabled
+#   - gpg with a key matching <signer-name>
+#   - The floresta-nix repository checked out at the release tag
+#
+# CROSS-COMPILATION
+#
+# Currently, this script builds for the native platform only.
+# Cross-compilation from Linux to Darwin/Windows is planned.
+# Darwin targets are commented out until SDK handling is ready.
+
+set -euo pipefail
+
+# ---- Argument parsing ----
+
+VERSION="${1:?Usage: $0 <version> <signer-name>}"
+SIGNER="${2:?Usage: $0 <version> <signer-name>}"
+
+# ---- Path setup ----
+#
+# SCRIPT_DIR is the contrib/ directory
+# REPO_ROOT is the floresta-nix root
+# FLAKE_REF is how we reference this flake for nix build
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+FLAKE_REF="${REPO_ROOT}"
+
+# ---- Build targets ----
+#
+# Each entry is a Nix system tuple. These must match the package outputs
+# defined in the flake. Currently we build natively; cross-compilation
+# to darwin/windows requires additional SDK setup.
+
+TARGETS=(
+    x86_64-linux
+    aarch64-linux
+    # x86_64-darwin     # TODO: cross-compile with SDK
+    # aarch64-darwin    # TODO: cross-compile with SDK
+    # x86_64-windows   # TODO: cross-compile with mingw
+)
+
+# ---- Packages to build for each target ----
+
+PACKAGES=(florestad floresta-cli)
+
+# ---- Output directory ----
+#
+# We write directly to sigs/ in the current directory. The typical workflow
+# is to run this from a floresta.sigs checkout, with floresta-nix as a
+# sibling directory, so the output ends up in the right place.
+
+OUTDIR="sigs/${VERSION}/${SIGNER}"
+mkdir -p "${OUTDIR}"
+
+echo "floresta-attest: building ${VERSION} as ${SIGNER}"
+echo "targets: ${TARGETS[*]}"
+echo "output:  ${OUTDIR}/"
+echo ""
+
+# ---- Build phase ----
+#
+# For each (target, package) pair:
+#   1. Run nix build to get the store path
+#   2. Copy the binary to OUTDIR with a descriptive name
+#   3. Compute sha256sum of the binary itself (not the store path)
+#   4. Append "  <hash>  <filename>" to SHA256SUMS
+#
+# The naming scheme "florestad-x86_64-linux" matches what the release
+# workflow uses, so SHA256SUMS is consistent with GitHub Release files.
+
+SUMS_FILE="${OUTDIR}/SHA256SUMS"
+: >"${SUMS_FILE}"
+
+for system in "${TARGETS[@]}"; do
+    for pkg in "${PACKAGES[@]}"; do
+        echo "Building ${pkg} for ${system}..."
+
+        # Get the store path (the result of nix build)
+        STORE_PATH=$(nix build \
+            "${FLAKE_REF}#packages.${system}.${pkg}" \
+            --no-link --print-out-paths)
+
+        # The binary lives at bin/<pkgname> inside the store path
+        BIN_NAME="${pkg}"
+        BIN_PATH="${STORE_PATH}/bin/${BIN_NAME}"
+
+        if [ ! -f "${BIN_PATH}" ]; then
+            echo "ERROR: expected binary not found at ${BIN_PATH}"
+            exit 1
+        fi
+
+        # Descriptive artifact name matching release workflow conventions
+        ARTIFACT_NAME="${pkg}-${system}"
+        cp "${BIN_PATH}" "${OUTDIR}/${ARTIFACT_NAME}"
+
+        # Hash the actual binary, not the store path.
+        # This is what users would compute after downloading.
+        HASH=$(sha256sum "${OUTDIR}/${ARTIFACT_NAME}" | cut -d' ' -f1)
+        echo "${HASH}  ${ARTIFACT_NAME}" >>"${SUMS_FILE}"
+
+        echo "  ${HASH}  ${ARTIFACT_NAME}"
+    done
+done
+
+# ---- Signing phase ----
+#
+# Sign the SHA256SUMS file with GPG. The --detach-sign --armor flags
+# produce a "SHA256SUMS.asc" file in the same format GitHub expects.
+# gpg will use whichever key matches the user's default key or user ID.
+
+echo ""
+echo "Signing SHA256SUMS with GPG..."
+echo "(Make sure your GPG key has uid: ${SIGNER})"
+gpg --detach-sign --armor --output "${SUMS_FILE}.asc" "${SUMS_FILE}"
+
+# ---- Done ----
+
+echo ""
+echo "Done. Output:"
+echo "  ${SUMS_FILE}"
+echo "  ${SUMS_FILE}.asc"
+echo ""
+echo "Next steps — run these commands:"
+echo ""
+echo "  # Assuming floresta.sigs is cloned at ./floresta.sigs"
+echo "  cp -r sigs/${VERSION}/${SIGNER}/ ./floresta.sigs/${VERSION}/"
+echo "  cd ./floresta.sigs"
+echo "  git checkout -b attest/${VERSION}/${SIGNER}"
+echo "  git add ${VERSION}/${SIGNER}"
+echo "  git commit -m \"sign: attest ${VERSION} as ${SIGNER}\""
+echo "  gh pr create"
