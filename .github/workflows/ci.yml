@@ -99,3 +99,125 @@ jobs:
 
       - name: Build ${{ matrix.package }}
         run: nix build -L .#${{ matrix.package }}
+
+      - name: Record binary hash
+        if: contains(fromJSON('["florestad", "floresta-cli"]'), matrix.package)
+        run: |
+          mkdir -p hashes
+          sha256sum result/bin/${{ matrix.package }} | cut -d' ' -f1 \
+            > hashes/${{ matrix.package }}-${{ matrix.system }}.sha256
+
+      - name: Upload hash
+        if: contains(fromJSON('["florestad", "floresta-cli"]'), matrix.package)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hash-native-${{ matrix.package }}-${{ matrix.system }}
+          path: hashes/
+
+  cross-build:
+    name: Cross ${{ matrix.package }}-${{ matrix.target }} (from ${{ matrix.host }})
+    needs: nix-sanity-check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: x86_64-linux
+            target: aarch64-linux
+            package: florestad
+            runner: ubuntu-latest
+          - host: x86_64-linux
+            target: aarch64-linux
+            package: floresta-cli
+            runner: ubuntu-latest
+          - host: aarch64-linux
+            target: x86_64-linux
+            package: florestad
+            runner: ubuntu-24.04-arm
+          - host: aarch64-linux
+            target: x86_64-linux
+            package: floresta-cli
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: floresta-flake
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+          skipPush: ${{ github.event_name == 'pull_request' }}
+
+      - name: Cross-build ${{ matrix.package }}-${{ matrix.target }}
+        run: nix build -L .#${{ matrix.package }}-${{ matrix.target }}
+
+      - name: Record binary hash
+        run: |
+          mkdir -p hashes
+          sha256sum result/bin/${{ matrix.package }} | cut -d' ' -f1 \
+            > hashes/${{ matrix.package }}-${{ matrix.target }}.sha256
+
+      - name: Upload hash
+        uses: actions/upload-artifact@v4
+        with:
+          name: hash-cross-${{ matrix.package }}-${{ matrix.target }}-from-${{ matrix.host }}
+          path: hashes/
+
+  hash-check:
+    name: Verify reproducibility
+    needs: [build, cross-build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all hashes
+        uses: actions/download-artifact@v4
+        with:
+          path: all-hashes
+          pattern: hash-*
+
+      - name: Compare native vs cross-compiled hashes
+        run: |
+          echo "=== Collected hashes ==="
+          find all-hashes -name '*.sha256' -exec sh -c 'echo "$(cat "$1") $1"' _ {} \;
+          echo ""
+
+          FAILED=0
+          for target in aarch64-linux x86_64-linux; do
+            for pkg in florestad floresta-cli; do
+              NATIVE_FILE=$(find all-hashes -path "*hash-native-${pkg}-${target}*/${pkg}-${target}.sha256" 2>/dev/null | head -1)
+              if [ -z "${NATIVE_FILE}" ]; then
+                echo "SKIP ${pkg}-${target}: no native hash found"
+                continue
+              fi
+              NATIVE_HASH=$(cat "${NATIVE_FILE}")
+
+              CROSS_FILES=$(find all-hashes -path "*hash-cross-${pkg}-${target}-*/${pkg}-${target}.sha256" 2>/dev/null)
+              if [ -z "${CROSS_FILES}" ]; then
+                echo "SKIP ${pkg}-${target}: no cross hash found"
+                continue
+              fi
+
+              while IFS= read -r cross_file; do
+                CROSS_HASH=$(cat "${cross_file}")
+                HOST=$(echo "${cross_file}" | sed -n 's/.*from-\([^/]*\).*/\1/p')
+                if [ "${NATIVE_HASH}" = "${CROSS_HASH}" ]; then
+                  echo "OK ${pkg}-${target} (native vs cross from ${HOST}): ${NATIVE_HASH}"
+                else
+                  echo "MISMATCH ${pkg}-${target} (cross from ${HOST}): native=${NATIVE_HASH} cross=${CROSS_HASH}"
+                  FAILED=1
+                fi
+              done <<< "${CROSS_FILES}"
+            done
+          done
+
+          if [ "${FAILED}" -eq 1 ]; then
+            echo ""
+            echo "Reproducibility check FAILED"
+            exit 1
+          fi
+          echo ""
+          echo "All hashes match"

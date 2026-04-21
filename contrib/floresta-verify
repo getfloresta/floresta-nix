@@ -91,8 +91,8 @@ for signer_dir in "${VERSION_DIR}"/*/; do
         continue
     fi
 
-    if gpg --verify "${SIG}" "${SUMS}" 2>/dev/null; then
-        FINGERPRINT=$(gpg --verify "${SIG}" "${SUMS}" 2>&1 | grep -oP '(?<=using \w+ key )\w+' || echo "unknown")
+    if gpg --status-fd 1 --verify "${SIG}" "${SUMS}" 2>/dev/null | grep -q VALIDSIG; then
+        FINGERPRINT=$(gpg --status-fd 1 --verify "${SIG}" "${SUMS}" 2>/dev/null | awk '/^\[GNUPG:\] VALIDSIG/{print $3}')
         echo "  OK   ${SIGNER} (key: ${FINGERPRINT})"
         VALID_SIGNERS+=("${SIGNER}")
     else

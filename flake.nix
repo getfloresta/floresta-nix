@@ -73,8 +73,11 @@
           packages =
             let
               florestaBuild = import ./lib/floresta-build.nix { inherit pkgs; };
+              crossX86 = florestaBuild.forPkgs pkgs.pkgsCross.gnu64;
+              crossAarch64 = florestaBuild.forPkgs pkgs.pkgsCross.aarch64-multiplatform;
             in
             {
+              # Native packages — available on all systems
               inherit (florestaBuild)
                 florestad
                 floresta-cli
@@ -82,6 +85,16 @@
                 floresta-debug
                 default
                 ;
+            }
+            // pkgs.lib.optionalAttrs (system != "x86_64-linux") {
+              # Cross-compiled x86_64-linux from any other host
+              florestad-x86_64-linux = crossX86.florestad;
+              floresta-cli-x86_64-linux = crossX86.floresta-cli;
+            }
+            // pkgs.lib.optionalAttrs (system != "aarch64-linux") {
+              # Cross-compiled aarch64-linux from any other host
+              florestad-aarch64-linux = crossAarch64.florestad;
+              floresta-cli-aarch64-linux = crossAarch64.floresta-cli;
             };
 
           devShells.default = pkgs.mkShell {
@@ -92,6 +105,7 @@
               just
               shellcheck
               shfmt
+              nix-output-monitor
             ];
           };
         };

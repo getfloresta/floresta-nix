@@ -8,6 +8,7 @@
 let
   inherit (lib) types mkOption;
 
+  # Option definitions for the build module
   buildFlorestaOptions = {
     options = {
       packageName = mkOption {
@@ -166,18 +167,20 @@ let
   mkFloresta =
     args:
     let
-      # Evaluate and validate the configuration
       cfg = evalConfig args;
-
-      # Get the config for the requested package
       pkgConfig = packageConfigs.${cfg.packageName};
-
-      # Read version from appropriate Cargo.toml
       cargoToml = builtins.fromTOML (builtins.readFile "${cfg.src}/${pkgConfig.cargoTomlPath}");
 
-      # Well problably need that in the future
-      darwinDeps = [ ];
-      windowsDeps = [ ];
+      # Darwin frameworks linked into the target binary
+      darwinFrameworks = with pkgs.darwin.apple_sdk.frameworks; [
+        Security
+        SystemConfiguration
+      ];
+
+      # Windows libraries linked into the target binary
+      windowsLibs = [ pkgs.windows.pthreads ];
+
+      inherit (pkgs.stdenv) targetPlatform;
     in
     pkgs.rustPlatform.buildRustPackage {
       inherit (cargoToml.package) version;
@@ -186,30 +189,35 @@ let
 
       buildFeatures = cfg.features ++ (cfg.extraFeatures or [ ]);
 
+      # Build-time tools that run on the build machine
       nativeBuildInputs = [
-        pkgs.openssl
         pkgs.pkg-config
-        pkgs.boost
         pkgs.cmake
         pkgs.llvmPackages.clang
         pkgs.llvmPackages.libclang
       ]
-      ++ lib.optionals pkgs.hostPlatform.isDarwin darwinDeps
-      ++ lib.optionals pkgs.hostPlatform.isWindows windowsDeps
       ++ cfg.extraBuildInputs;
+
+      # Libraries and frameworks linked into the target binary
+      buildInputs = [
+        pkgs.openssl
+        pkgs.boost
+      ]
+      ++ lib.optionals targetPlatform.isDarwin darwinFrameworks
+      ++ lib.optionals targetPlatform.isWindows windowsLibs;
 
       cargoLock = {
         lockFile = "${cfg.src}/Cargo.lock";
       };
 
-      # Bitcoin Kernel needs these
       LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
       CMAKE_PREFIX_PATH = "${pkgs.boost.dev}";
 
-      cargoDeps = pkgs.rustPlatform.importCargoLock { lockFile = "${cfg.src}/Cargo.lock"; };
+      cargoDeps = pkgs.rustPlatform.importCargoLock {
+        lockFile = "${cfg.src}/Cargo.lock";
+      };
 
       checkFlags = [
-        # These tests has special needs that nix cant provide.
         "--skip=tests::test_get_block_header"
         "--skip=tests::test_get_block"
         "--skip=tests::test_get_block_hash"
@@ -234,27 +242,61 @@ let
         mainProgram = pkgConfig.pname;
       };
 
-      # Override options
       passthru = {
         inherit cfg pkgConfig;
-
         override = newArgs: mkFloresta (cfg // newArgs);
         overrideAttrs = f: (mkFloresta args).overrideAttrs f;
       };
     };
 
+  # Extract a single binary from a combined build
+  extractBin =
+    combined: binName:
+    pkgs.runCommand binName { inherit (combined) meta; } ''
+      mkdir -p $out/bin
+      cp ${combined}/bin/${binName} $out/bin/${binName}
+    '';
+
+  # Helper for cross-compilation: create package builders with a specific pkgs instance.
+  # Builds all binaries once and splits them to avoid redundant compilation.
+  forPkgs =
+    targetPkgs:
+    let
+      florestaPkgs = import ./floresta-build.nix {
+        pkgs = targetPkgs;
+        inherit (targetPkgs) lib;
+      };
+      combined = florestaPkgs.mkFloresta {
+        packageName = "all";
+        doCheck = false;
+      };
+    in
+    {
+      inherit (florestaPkgs) mkFloresta;
+      default = combined;
+      florestad = florestaPkgs.extractBin combined "florestad";
+      floresta-cli = florestaPkgs.extractBin combined "floresta-cli";
+      libfloresta = florestaPkgs.mkFloresta {
+        packageName = "libfloresta";
+        doCheck = false;
+      };
+      floresta-debug = florestaPkgs.mkFloresta {
+        packageName = "floresta-debug";
+        doCheck = false;
+      };
+    };
 in
 {
-  # The main builder function
-  build = mkFloresta;
+  inherit
+    mkFloresta
+    forPkgs
+    extractBin
+    buildFlorestaOptions
+    ;
 
   default = mkFloresta { };
-
   florestad = mkFloresta { packageName = "florestad"; };
   floresta-cli = mkFloresta { packageName = "floresta-cli"; };
   libfloresta = mkFloresta { packageName = "libfloresta"; };
   floresta-debug = mkFloresta { packageName = "floresta-debug"; };
-
-  # For documentation generation
-  inherit buildFlorestaOptions;
 }

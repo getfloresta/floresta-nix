@@ -27,20 +27,19 @@
 #   sigs/<version>/<signer-name>/
 #     SHA256SUMS      - Hashes of each binary, one per line
 #     SHA256SUMS.asc  - GPG detached signature over SHA256SUMS
-#     florestad-*     - The binary files (for reference)
-#     floresta-cli-*  - The binary files (for reference)
+#
+# ARTIFACT NAMING
+#
+#   floresta-cli-aarch64-linux-gnu
+#   floresta-cli-x86_64-linux-gnu
+#   florestad-aarch64-linux-gnu
+#   florestad-x86_64-linux-gnu
 #
 # PREREQUISITES
 #
 #   - nix with flakes enabled
 #   - gpg with a key matching <signer-name>
 #   - The floresta-nix repository checked out at the release tag
-#
-# CROSS-COMPILATION
-#
-# Currently, this script builds for the native platform only.
-# Cross-compilation from Linux to Darwin/Windows is planned.
-# Darwin targets are commented out until SDK handling is ready.
 
 set -euo pipefail
 
@@ -50,97 +49,131 @@ VERSION="${1:?Usage: $0 <version> <signer-name>}"
 SIGNER="${2:?Usage: $0 <version> <signer-name>}"
 
 # ---- Path setup ----
-#
-# SCRIPT_DIR is the contrib/ directory
-# REPO_ROOT is the floresta-nix root
-# FLAKE_REF is how we reference this flake for nix build
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 FLAKE_REF="${REPO_ROOT}"
 
-# ---- Build targets ----
-#
-# Each entry is a Nix system tuple. These must match the package outputs
-# defined in the flake. Currently we build natively; cross-compilation
-# to darwin/windows requires additional SDK setup.
+# Detect current system
+CURRENT_SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
 
-TARGETS=(
-    x86_64-linux
-    aarch64-linux
-    # x86_64-darwin     # TODO: cross-compile with SDK
-    # aarch64-darwin    # TODO: cross-compile with SDK
-    # x86_64-windows   # TODO: cross-compile with mingw
+# ---- Build configuration ----
+#
+# For each platform we build, define:
+#   system       - Nix system tuple
+#   packageAttr  - Package attribute name in the flake (for nix build)
+#   binaryName   - Name of the binary inside the store path (bin/)
+#   triple       - Canonical artifact triple for SHA256SUMS
+
+# Native packages always exist
+PACKAGES=(
+    "florestad"
+    "floresta-cli"
 )
 
-# ---- Packages to build for each target ----
+# Build targets: native system + cross-compiled Linux targets from any host.
+# Darwin targets are only available natively (no cross-to-Darwin yet).
+declare -a TARGETS=()
 
-PACKAGES=(florestad floresta-cli)
+TARGETS+=("x86_64-linux")
+TARGETS+=("aarch64-linux")
+
+case "${CURRENT_SYSTEM}" in
+x86_64-darwin)
+    TARGETS+=("x86_64-darwin")
+    ;;
+aarch64-darwin)
+    TARGETS+=("aarch64-darwin")
+    ;;
+esac
+
+# Map system to package attribute name
+#
+# When the target system matches the current system, we use the native
+# package name. When different, we use the cross-compiled package with suffix.
+# Example: on aarch64-darwin building for aarch64-linux, we use "florestad-aarch64-linux"
+get_package_attr() {
+    local system="$1"
+    local pkg="$2"
+
+    if [ "${system}" = "${CURRENT_SYSTEM}" ]; then
+        echo "${pkg}"
+    else
+        echo "${pkg}-${system}"
+    fi
+}
+
+# Map system to canonical triple
+get_triple() {
+    local system="$1"
+    local pkg="$2"
+
+    case "${system}" in
+    x86_64-linux)
+        echo "${pkg}-x86_64-linux-gnu"
+        ;;
+    aarch64-linux)
+        echo "${pkg}-aarch64-linux-gnu"
+        ;;
+    x86_64-darwin)
+        echo "${pkg}-x86_64-apple-darwin"
+        ;;
+    aarch64-darwin)
+        echo "${pkg}-aarch64-apple-darwin"
+        ;;
+    *)
+        echo "ERROR: unknown system ${system}" >&2
+        exit 1
+        ;;
+    esac
+}
 
 # ---- Output directory ----
-#
-# We write directly to sigs/ in the current directory. The typical workflow
-# is to run this from a floresta.sigs checkout, with floresta-nix as a
-# sibling directory, so the output ends up in the right place.
 
 OUTDIR="sigs/${VERSION}/${SIGNER}"
 mkdir -p "${OUTDIR}"
 
 echo "floresta-attest: building ${VERSION} as ${SIGNER}"
+echo "current system: ${CURRENT_SYSTEM}"
 echo "targets: ${TARGETS[*]}"
 echo "output:  ${OUTDIR}/"
 echo ""
 
 # ---- Build phase ----
-#
-# For each (target, package) pair:
-#   1. Run nix build to get the store path
-#   2. Copy the binary to OUTDIR with a descriptive name
-#   3. Compute sha256sum of the binary itself (not the store path)
-#   4. Append "  <hash>  <filename>" to SHA256SUMS
-#
-# The naming scheme "florestad-x86_64-linux" matches what the release
-# workflow uses, so SHA256SUMS is consistent with GitHub Release files.
 
 SUMS_FILE="${OUTDIR}/SHA256SUMS"
 : >"${SUMS_FILE}"
 
 for system in "${TARGETS[@]}"; do
     for pkg in "${PACKAGES[@]}"; do
-        echo "Building ${pkg} for ${system}..."
+        PKG_ATTR=$(get_package_attr "${system}" "${pkg}")
+        TRIPLE=$(get_triple "${system}" "${pkg}")
 
-        # Get the store path (the result of nix build)
+        echo "Building ${pkg} for ${system} (package: ${PKG_ATTR})..."
+
+        # Build and get store path
         STORE_PATH=$(nix build \
-            "${FLAKE_REF}#packages.${system}.${pkg}" \
+            "${FLAKE_REF}#packages.${CURRENT_SYSTEM}.${PKG_ATTR}" \
             --no-link --print-out-paths)
 
-        # The binary lives at bin/<pkgname> inside the store path
-        BIN_NAME="${pkg}"
-        BIN_PATH="${STORE_PATH}/bin/${BIN_NAME}"
+        # Binary path inside store: bin/<binary-name>
+        BIN_PATH="${STORE_PATH}/bin/${pkg}"
 
         if [ ! -f "${BIN_PATH}" ]; then
             echo "ERROR: expected binary not found at ${BIN_PATH}"
             exit 1
         fi
 
-        # Descriptive artifact name matching release workflow conventions
-        ARTIFACT_NAME="${pkg}-${system}"
-        cp "${BIN_PATH}" "${OUTDIR}/${ARTIFACT_NAME}"
+        # Hash the binary directly from store (don't copy to sigs/)
+        # sigs/ only contains SHA256SUMS and SHA256SUMS.asc
+        HASH=$(sha256sum "${BIN_PATH}" | cut -d' ' -f1)
+        echo "${HASH}  ${TRIPLE}" >>"${SUMS_FILE}"
 
-        # Hash the actual binary, not the store path.
-        # This is what users would compute after downloading.
-        HASH=$(sha256sum "${OUTDIR}/${ARTIFACT_NAME}" | cut -d' ' -f1)
-        echo "${HASH}  ${ARTIFACT_NAME}" >>"${SUMS_FILE}"
-
-        echo "  ${HASH}  ${ARTIFACT_NAME}"
+        echo "  ${HASH}  ${TRIPLE}"
     done
 done
 
 # ---- Signing phase ----
-#
-# Sign the SHA256SUMS file with GPG. The --detach-sign --armor flags
-# produce a "SHA256SUMS.asc" file in the same format GitHub expects.
-# gpg will use whichever key matches the user's default key or user ID.
 
 echo ""
 echo "Signing SHA256SUMS with GPG..."
@@ -150,16 +183,16 @@ gpg --detach-sign --armor --output "${SUMS_FILE}.asc" "${SUMS_FILE}"
 # ---- Done ----
 
 echo ""
-echo "Done. Output:"
-echo "  ${SUMS_FILE}"
-echo "  ${SUMS_FILE}.asc"
+echo "Done. Output in ${OUTDIR}/:"
+echo "  SHA256SUMS      (hash manifest)"
+echo "  SHA256SUMS.asc  (GPG signature)"
 echo ""
 echo "Next steps — run these commands:"
 echo ""
 echo "  # Assuming floresta.sigs is cloned at ./floresta.sigs"
-echo "  cp -r sigs/${VERSION}/${SIGNER}/ ./floresta.sigs/${VERSION}/"
+echo "  cp SHA256SUMS SHA256SUMS.asc ./floresta.sigs/${VERSION}/${SIGNER}/"
 echo "  cd ./floresta.sigs"
 echo "  git checkout -b attest/${VERSION}/${SIGNER}"
-echo "  git add ${VERSION}/${SIGNER}"
+echo "  git add ${VERSION}/${SIGNER}/"
 echo "  git commit -m \"sign: attest ${VERSION} as ${SIGNER}\""
 echo "  gh pr create"

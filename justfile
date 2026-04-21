@@ -19,7 +19,50 @@ _package-binary package system:
     chmod +x artifacts/{{ package }}-{{ system }}
     echo "✅ Packaged {{ package }}-{{ system }}"
 
-# Build and package the binaries.
+# Build a cross-compiled package, e.g. `just cross-build florestad-aarch64-linux`
+cross-build target:
+    nix build -L .#{{ target }}
+
+# Build all cross-compiled targets available on this host
+cross-build-all:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+    TARGETS=("x86_64-linux" "aarch64-linux")
+    PACKAGES=("florestad" "floresta-cli")
+
+    case "${SYSTEM}" in
+        x86_64-darwin)  TARGETS+=("x86_64-darwin") ;;
+        aarch64-darwin) TARGETS+=("aarch64-darwin") ;;
+    esac
+
+    ATTRS=()
+    NAMES=()
+    for target in "${TARGETS[@]}"; do
+        for pkg in "${PACKAGES[@]}"; do
+            if [ "${target}" = "${SYSTEM%-*}-${SYSTEM#*-}" ]; then
+                ATTR="${pkg}"
+            else
+                ATTR="${pkg}-${target}"
+            fi
+            ATTRS+=(".#${ATTR}")
+            NAMES+=("${ATTR}")
+        done
+    done
+
+    echo "Building: ${NAMES[*]}"
+    if command -v nom &> /dev/null; then
+        nix build -L --no-link "${ATTRS[@]}" 2>&1 | nom
+    else
+        nix build -L --no-link "${ATTRS[@]}"
+    fi
+
+    # Create named result symlinks
+    for i in "${!ATTRS[@]}"; do
+        nix build "${ATTRS[$i]}" --out-link "result-${NAMES[$i]}"
+    done
+
+# Build and package native binaries into artifacts/
 build-and-package-all:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -31,6 +74,44 @@ build-and-package-all:
 
     just build floresta-cli
     just _package-binary floresta-cli $SYSTEM
+
+# Produce a signed attestation for a release
+attest version signer:
+    ./contrib/floresta-attest {{ version }} {{ signer }}
+
+# Verify attestations for a release
+verify version sigs_path="./floresta.sigs":
+    ./contrib/floresta-verify {{ version }} {{ sigs_path }}
+
+# Hash all binaries found in result dirs (supports both result-<name> and result-N naming)
+check-hashes:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    FOUND=0
+
+    echo "=== Binary hashes ==="
+
+    # Find all result symlinks (result, result-*, result-N)
+    for link in result result-*; do
+        [ -L "${link}" ] || continue
+        [ -d "${link}/bin" ] || continue
+
+        for bin in "${link}"/bin/*; do
+            [ -f "${bin}" ] || continue
+            HASH=$(shasum -a 256 "${bin}" | cut -d' ' -f1)
+            NAME=$(basename "${bin}")
+            echo "${HASH}  ${link}/bin/${NAME}"
+            FOUND=$((FOUND + 1))
+        done
+    done
+
+    if [ "${FOUND}" -eq 0 ]; then
+        echo "No result directories found. Run 'just cross-build-all' first."
+        exit 1
+    fi
+
+    echo ""
+    echo "${FOUND} binaries hashed"
 
 # Clean build artifacts
 clean:
