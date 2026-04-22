@@ -28,7 +28,7 @@ cross-build-all:
     #!/usr/bin/env bash
     set -euo pipefail
     SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
-    TARGETS=("x86_64-linux" "aarch64-linux")
+    TARGETS=("x86_64-linux" "aarch64-linux" "x86_64-windows")
     PACKAGES=("florestad" "floresta-cli")
 
     case "${SYSTEM}" in

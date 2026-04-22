@@ -179,25 +179,59 @@ jobs:
           path: all-hashes
           pattern: hash-*
 
-      - name: Compare native vs cross-compiled hashes
+      - name: Compare cross-compiled hashes (same target, different hosts)
         run: |
-          echo "=== Collected hashes ==="
+          echo "=== All collected hashes ==="
           find all-hashes -name '*.sha256' -exec sh -c 'echo "$(cat "$1") $1"' _ {} \;
           echo ""
 
           FAILED=0
+
+          # --- Tier 1: Cross vs Cross (MUST match — same target from different hosts) ---
+          echo "=== Cross vs Cross (strict) ==="
+          for target in aarch64-linux x86_64-linux; do
+            for pkg in florestad floresta-cli; do
+              CROSS_FILES=$(find all-hashes -path "*hash-cross-${pkg}-${target}-*/${pkg}-${target}.sha256" 2>/dev/null | sort)
+              COUNT=$(echo "${CROSS_FILES}" | grep -c . || true)
+
+              if [ "${COUNT}" -lt 2 ]; then
+                echo "SKIP ${pkg}-${target}: need 2+ cross builds to compare (found ${COUNT})"
+                continue
+              fi
+
+              FIRST_HASH=""
+              FIRST_HOST=""
+              while IFS= read -r cross_file; do
+                HASH=$(cat "${cross_file}")
+                HOST=$(echo "${cross_file}" | sed -n 's/.*from-\([^/]*\).*/\1/p')
+
+                if [ -z "${FIRST_HASH}" ]; then
+                  FIRST_HASH="${HASH}"
+                  FIRST_HOST="${HOST}"
+                elif [ "${HASH}" = "${FIRST_HASH}" ]; then
+                  echo "OK ${pkg}-${target}: cross from ${FIRST_HOST} == cross from ${HOST} (${HASH})"
+                else
+                  echo "MISMATCH ${pkg}-${target}: cross from ${FIRST_HOST}=${FIRST_HASH} vs cross from ${HOST}=${HASH}"
+                  FAILED=1
+                fi
+              done <<< "${CROSS_FILES}"
+            done
+          done
+
+          echo ""
+
+          # --- Tier 2: Native vs Cross (informational — not expected to match) ---
+          echo "=== Native vs Cross (informational) ==="
           for target in aarch64-linux x86_64-linux; do
             for pkg in florestad floresta-cli; do
               NATIVE_FILE=$(find all-hashes -path "*hash-native-${pkg}-${target}*/${pkg}-${target}.sha256" 2>/dev/null | head -1)
               if [ -z "${NATIVE_FILE}" ]; then
-                echo "SKIP ${pkg}-${target}: no native hash found"
                 continue
               fi
               NATIVE_HASH=$(cat "${NATIVE_FILE}")
 
               CROSS_FILES=$(find all-hashes -path "*hash-cross-${pkg}-${target}-*/${pkg}-${target}.sha256" 2>/dev/null)
               if [ -z "${CROSS_FILES}" ]; then
-                echo "SKIP ${pkg}-${target}: no cross hash found"
                 continue
               fi
 
@@ -205,19 +239,18 @@ jobs:
                 CROSS_HASH=$(cat "${cross_file}")
                 HOST=$(echo "${cross_file}" | sed -n 's/.*from-\([^/]*\).*/\1/p')
                 if [ "${NATIVE_HASH}" = "${CROSS_HASH}" ]; then
-                  echo "OK ${pkg}-${target} (native vs cross from ${HOST}): ${NATIVE_HASH}"
+                  echo "MATCH ${pkg}-${target} (native vs cross from ${HOST}): ${NATIVE_HASH}"
                 else
-                  echo "MISMATCH ${pkg}-${target} (cross from ${HOST}): native=${NATIVE_HASH} cross=${CROSS_HASH}"
-                  FAILED=1
+                  echo "DIFFERS ${pkg}-${target} (native vs cross from ${HOST}): native=${NATIVE_HASH} cross=${CROSS_HASH}"
                 fi
               done <<< "${CROSS_FILES}"
             done
           done
 
+          echo ""
+
           if [ "${FAILED}" -eq 1 ]; then
-            echo ""
-            echo "Reproducibility check FAILED"
+            echo "Cross-compilation reproducibility check FAILED"
             exit 1
           fi
-          echo ""
-          echo "All hashes match"
+          echo "All cross-compiled hashes match across hosts"
