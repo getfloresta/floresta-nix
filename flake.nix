@@ -75,6 +75,7 @@
               florestaBuild = import ./lib/floresta-build.nix { inherit pkgs; };
               crossX86 = florestaBuild.forPkgs pkgs.pkgsCross.gnu64;
               crossAarch64 = florestaBuild.forPkgs pkgs.pkgsCross.aarch64-multiplatform;
+              crossWindows = florestaBuild.forPkgs pkgs.pkgsCross.mingwW64;
             in
             {
               # Native packages — available on all systems
@@ -95,6 +96,11 @@
               # Cross-compiled aarch64-linux from any other host
               florestad-aarch64-linux = crossAarch64.florestad;
               floresta-cli-aarch64-linux = crossAarch64.floresta-cli;
+            }
+            // {
+              # Cross-compiled Windows x86_64 from any host
+              florestad-x86_64-windows = crossWindows.florestad;
+              floresta-cli-x86_64-windows = crossWindows.floresta-cli;
             };
 
           formatter = pkgs.nixfmt-classic;

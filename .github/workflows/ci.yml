@@ -26,7 +26,7 @@ jobs:
         with:
           name: floresta-flake
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-          skipPush: ${{ github.event_name == 'pull_request' }}
+          skipPush: false
 
       - name: Nix flake check
         run: nix flake check -L
@@ -51,7 +51,7 @@ jobs:
         with:
           name: floresta-flake
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-          skipPush: ${{ github.event_name == 'pull_request' }}
+          skipPush: false
 
       - name: Run eval tests
         run: nix build -L .#checks.x86_64-linux.service-eval-test
@@ -95,7 +95,7 @@ jobs:
         with:
           name: floresta-flake
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-          skipPush: ${{ github.event_name == 'pull_request' }}
+          skipPush: false
 
       - name: Build ${{ matrix.package }}
         run: nix build -L .#${{ matrix.package }}
@@ -151,7 +151,7 @@ jobs:
         with:
           name: floresta-flake
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-          skipPush: ${{ github.event_name == 'pull_request' }}
+          skipPush: false
 
       - name: Cross-build ${{ matrix.package }}-${{ matrix.target }}
         run: nix build -L .#${{ matrix.package }}-${{ matrix.target }}
