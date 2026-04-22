@@ -172,10 +172,13 @@ let
       cargoToml = builtins.fromTOML (builtins.readFile "${cfg.src}/${pkgConfig.cargoTomlPath}");
 
       # Darwin frameworks linked into the target binary
-      darwinFrameworks = with pkgs.darwin.apple_sdk.frameworks; [
-        Security
-        SystemConfiguration
-      ];
+      darwinFrameworks =
+        with pkgs.darwin.apple_sdk.frameworks;
+        [
+          Security
+          SystemConfiguration
+        ]
+        ++ [ pkgs.libiconv ];
 
       # Windows libraries linked into the target binary
       windowsLibs = [ pkgs.windows.pthreads ];
@@ -193,8 +196,13 @@ let
       nativeBuildInputs = [
         pkgs.pkg-config
         pkgs.cmake
-        pkgs.llvmPackages.clang
-        pkgs.llvmPackages.libclang
+        pkgs.buildPackages.llvmPackages.clang
+        pkgs.buildPackages.llvmPackages.libclang
+      ]
+      ++ lib.optionals pkgs.stdenv.buildPlatform.isDarwin [
+        pkgs.buildPackages.libiconv
+        pkgs.buildPackages.darwin.apple_sdk.frameworks.Security
+        pkgs.buildPackages.darwin.apple_sdk.frameworks.SystemConfiguration
       ]
       ++ cfg.extraBuildInputs;
 
@@ -210,8 +218,19 @@ let
         lockFile = "${cfg.src}/Cargo.lock";
       };
 
-      LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+      LIBCLANG_PATH = "${pkgs.buildPackages.llvmPackages.libclang.lib}/lib";
       CMAKE_PREFIX_PATH = "${pkgs.boost.dev}";
+
+      preBuild =
+        let
+          inherit (pkgs.stdenv) buildPlatform;
+          isCross = pkgs.stdenv.hostPlatform != buildPlatform;
+          # Nix cc-wrapper mangles NIX_LDFLAGS with the platform config
+          platformSuffix = builtins.replaceStrings [ "-" ] [ "_" ] buildPlatform.config;
+        in
+        lib.optionalString (buildPlatform.isDarwin && isCross) ''
+          export NIX_LDFLAGS_${platformSuffix}="-L${pkgs.buildPackages.libiconv}/lib $NIX_LDFLAGS_${platformSuffix}"
+        '';
 
       cargoDeps = pkgs.rustPlatform.importCargoLock {
         lockFile = "${cfg.src}/Cargo.lock";

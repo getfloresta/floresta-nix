@@ -97,11 +97,13 @@
               floresta-cli-aarch64-linux = crossAarch64.floresta-cli;
             };
 
+          formatter = pkgs.nixfmt-classic;
+
           devShells.default = pkgs.mkShell {
             inherit (self'.checks.nix-sanity-check) shellHook;
             packages = with pkgs; [
               nil
-              nixfmt
+              nixfmt-classic
               just
               shellcheck
               shfmt
