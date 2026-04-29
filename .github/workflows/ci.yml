@@ -137,6 +137,22 @@ jobs:
             target: x86_64-linux
             package: floresta-cli
             runner: ubuntu-24.04-arm
+          - host: aarch64-darwin
+            target: aarch64-linux
+            package: florestad
+            runner: macos-14
+          - host: aarch64-darwin
+            target: aarch64-linux
+            package: floresta-cli
+            runner: macos-14
+          - host: aarch64-darwin
+            target: x86_64-linux
+            package: florestad
+            runner: macos-14
+          - host: aarch64-darwin
+            target: x86_64-linux
+            package: floresta-cli
+            runner: macos-14
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
