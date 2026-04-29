@@ -75,7 +75,27 @@
               florestaBuild = import ./lib/floresta-build.nix { inherit pkgs; };
               crossX86 = florestaBuild.forPkgs pkgs.pkgsCross.gnu64;
               crossAarch64 = florestaBuild.forPkgs pkgs.pkgsCross.aarch64-multiplatform;
-              crossWindows = florestaBuild.forPkgs pkgs.pkgsCross.mingwW64;
+              mingwPkgs = import inputs.nixpkgs {
+                inherit system;
+                crossSystem.config = "x86_64-w64-mingw32";
+                overlays = [
+                  (_final: prev: {
+                    boost = prev.boost.override {
+                      # boost_stacktrace_from_exception fails to compile on mingw
+                      # (it relies on POSIX-specific unwinding features)
+                      extraB2Args = [ "boost.stacktrace.from_exception=off" ];
+                    };
+                  })
+                  (_final: prev: {
+                    rhash = prev.rhash.overrideAttrs {
+                      # rhash produces broken symlinks when cross-compiled for mingw32
+                      # (librhash.so -> librhash.so.1 but only .dll is built)
+                      dontCheckForBrokenSymlinks = true;
+                    };
+                  })
+                ];
+              };
+              crossWindows = florestaBuild.forPkgs mingwPkgs;
             in
             {
               # Native packages — available on all systems
@@ -114,6 +134,7 @@
               shellcheck
               shfmt
               nix-output-monitor
+              cachix
             ];
           };
         };

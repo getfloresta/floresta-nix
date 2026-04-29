@@ -52,14 +52,14 @@ cross-build-all:
 
     echo "Building: ${NAMES[*]}"
     if command -v nom &> /dev/null; then
-        nix build -L --no-link "${ATTRS[@]}" 2>&1 | nom
+        nix build -L --no-link "${ATTRS[@]}" --impure 2>&1 | nom
     else
-        nix build -L --no-link "${ATTRS[@]}"
+        nix build -L --no-link "${ATTRS[@]}" --impure
     fi
 
     # Create named result symlinks
     for i in "${!ATTRS[@]}"; do
-        nix build "${ATTRS[$i]}" --out-link "result-${NAMES[$i]}"
+        nix build "${ATTRS[$i]}" --out-link "result-${NAMES[$i]}" --impure
     done
 
 # Build and package native binaries into artifacts/
@@ -112,6 +112,54 @@ check-hashes:
 
     echo ""
     echo "${FOUND} binaries hashed"
+
+# Push all result symlinks to Cachix. Falls back to CACHIX_AUTH_TOKEN env var.
+cachix-push key="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "{{ key }}" ]; then
+        export CACHIX_AUTH_TOKEN="{{ key }}"
+    fi
+    if [ -z "${CACHIX_AUTH_TOKEN:-}" ]; then
+        echo "Error: no auth token provided. Pass a key argument or set CACHIX_AUTH_TOKEN."
+        exit 1
+    fi
+    PUSHED=0
+    for link in result result-*; do
+        [ -L "${link}" ] || continue
+        echo "Pushing ${link} to floresta-flake..."
+        nix run nixpkgs#cachix -- push floresta-flake "${link}"
+        PUSHED=$((PUSHED + 1))
+    done
+    if [ "${PUSHED}" -eq 0 ]; then
+        echo "No result directories found. Run 'just build' or 'just cross-build-all' first."
+        exit 1
+    fi
+    echo "${PUSHED} store paths pushed to floresta-flake"
+
+# Build all native packages and push them to Cachix
+cachix-build-and-push key="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "{{ key }}" ]; then
+        export CACHIX_AUTH_TOKEN="{{ key }}"
+    fi
+    if [ -z "${CACHIX_AUTH_TOKEN:-}" ]; then
+        echo "Error: no auth token provided. Pass a key argument or set CACHIX_AUTH_TOKEN."
+        exit 1
+    fi
+
+    echo "Building all packages..."
+    SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+    PACKAGES=$(nix eval .#packages.${SYSTEM} --apply 'builtins.attrNames' --json | nix run nixpkgs#jq -- -r '.[]')
+
+    for pkg in ${PACKAGES}; do
+        echo "Building and pushing ${pkg}..."
+        nix build -L ".#${pkg}" --out-link "result-${pkg}"
+        nix run nixpkgs#cachix -- push floresta-flake "result-${pkg}"
+    done
+
+    echo "All packages built and pushed to floresta-flake"
 
 # Clean build artifacts
 clean:
