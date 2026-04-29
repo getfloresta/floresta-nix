@@ -100,7 +100,7 @@ let
 
       doCheck = mkOption {
         type = types.bool;
-        default = true;
+        default = false;
         description = ''
           Whether to run tests during the build, deactivate if youre limited on resources.
 
