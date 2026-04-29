@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# floresta-attest — produce a signed attestation for a Floresta release.
+#
+# PURPOSE
+#
+# This script allows independent builders to cryptographically attest that
+# they built the release from the tagged source. Each builder:
+#   1. Builds the binaries for all target platforms
+#   2. Computes SHA256 hashes of each binary (not store paths)
+#   3. Signs the hash list with their GPG key
+#
+# The signed attestations are collected in floresta.sigs, where verifiers
+# can check that all signers agree on the same hashes.
+#
+# USAGE
+#
+#   ./floresta-attest <version> <signer-name>
+#
+# Arguments:
+#   version     - The release tag, e.g. v0.9.0
+#   signer-name - Your identifier (must match your GPG key uid)
+#
+# OUTPUT
+#
+#   sigs/<version>/<signer-name>/
+#     SHA256SUMS      - Hashes of each binary, one per line
+#     SHA256SUMS.asc  - GPG detached signature over SHA256SUMS
+#
+# ARTIFACT NAMING
+#
+#   floresta-cli-aarch64-linux-gnu
+#   floresta-cli-x86_64-linux-gnu
+#   florestad-aarch64-linux-gnu
+#   florestad-x86_64-linux-gnu
+#
+# PREREQUISITES
+#
+#   - nix with flakes enabled
+#   - gpg with a key matching <signer-name>
+#   - The floresta-nix repository checked out at the release tag
+
+set -euo pipefail
+
+# ---- Argument parsing ----
+
+VERSION="${1:?Usage: $0 <version> <signer-name>}"
+SIGNER="${2:?Usage: $0 <version> <signer-name>}"
+
+# ---- Path setup ----
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+FLAKE_REF="${REPO_ROOT}"
+
+# Detect current system
+CURRENT_SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+
+# ---- Build configuration ----
+#
+# For each platform we build, define:
+#   system       - Nix system tuple
+#   packageAttr  - Package attribute name in the flake (for nix build)
+#   binaryName   - Name of the binary inside the store path (bin/)
+#   triple       - Canonical artifact triple for SHA256SUMS
+
+# Native packages always exist
+PACKAGES=(
+    "florestad"
+    "floresta-cli"
+)
+
+# Build targets: native system + cross-compiled Linux targets from any host.
+# Darwin targets are only available natively (no cross-to-Darwin yet).
+declare -a TARGETS=()
+
+TARGETS+=("x86_64-linux")
+TARGETS+=("aarch64-linux")
+
+case "${CURRENT_SYSTEM}" in
+x86_64-darwin)
+    TARGETS+=("x86_64-darwin")
+    ;;
+aarch64-darwin)
+    TARGETS+=("aarch64-darwin")
+    ;;
+esac
+
+# Map system to package attribute name
+#
+# When the target system matches the current system, we use the native
+# package name. When different, we use the cross-compiled package with suffix.
+# Example: on aarch64-darwin building for aarch64-linux, we use "florestad-aarch64-linux"
+get_package_attr() {
+    local system="$1"
+    local pkg="$2"
+
+    if [ "${system}" = "${CURRENT_SYSTEM}" ]; then
+        echo "${pkg}"
+    else
+        echo "${pkg}-${system}"
+    fi
+}
+
+# Map system to canonical triple
+get_triple() {
+    local system="$1"
+    local pkg="$2"
+
+    case "${system}" in
+    x86_64-linux)
+        echo "${pkg}-x86_64-linux-gnu"
+        ;;
+    aarch64-linux)
+        echo "${pkg}-aarch64-linux-gnu"
+        ;;
+    x86_64-darwin)
+        echo "${pkg}-x86_64-apple-darwin"
+        ;;
+    aarch64-darwin)
+        echo "${pkg}-aarch64-apple-darwin"
+        ;;
+    *)
+        echo "ERROR: unknown system ${system}" >&2
+        exit 1
+        ;;
+    esac
+}
+
+# ---- Output directory ----
+
+OUTDIR="sigs/${VERSION}/${SIGNER}"
+mkdir -p "${OUTDIR}"
+
+echo "floresta-attest: building ${VERSION} as ${SIGNER}"
+echo "current system: ${CURRENT_SYSTEM}"
+echo "targets: ${TARGETS[*]}"
+echo "output:  ${OUTDIR}/"
+echo ""
+
+# ---- Build phase ----
+
+SUMS_FILE="${OUTDIR}/SHA256SUMS"
+: >"${SUMS_FILE}"
+
+for system in "${TARGETS[@]}"; do
+    for pkg in "${PACKAGES[@]}"; do
+        PKG_ATTR=$(get_package_attr "${system}" "${pkg}")
+        TRIPLE=$(get_triple "${system}" "${pkg}")
+
+        echo "Building ${pkg} for ${system} (package: ${PKG_ATTR})..."
+
+        # Build and get store path
+        STORE_PATH=$(nix build \
+            "${FLAKE_REF}#packages.${CURRENT_SYSTEM}.${PKG_ATTR}" \
+            --no-link --print-out-paths)
+
+        # Binary path inside store: bin/<binary-name>
+        BIN_PATH="${STORE_PATH}/bin/${pkg}"
+
+        if [ ! -f "${BIN_PATH}" ]; then
+            echo "ERROR: expected binary not found at ${BIN_PATH}"
+            exit 1
+        fi
+
+        # Hash the binary directly from store (don't copy to sigs/)
+        # sigs/ only contains SHA256SUMS and SHA256SUMS.asc
+        HASH=$(sha256sum "${BIN_PATH}" | cut -d' ' -f1)
+        echo "${HASH}  ${TRIPLE}" >>"${SUMS_FILE}"
+
+        echo "  ${HASH}  ${TRIPLE}"
+    done
+done
+
+# ---- Signing phase ----
+
+echo ""
+echo "Signing SHA256SUMS with GPG..."
+echo "(Make sure your GPG key has uid: ${SIGNER})"
+gpg --detach-sign --armor --output "${SUMS_FILE}.asc" "${SUMS_FILE}"
+
+# ---- Done ----
+
+echo ""
+echo "Done. Output in ${OUTDIR}/:"
+echo "  SHA256SUMS      (hash manifest)"
+echo "  SHA256SUMS.asc  (GPG signature)"
+echo ""
+echo "Next steps — run these commands:"
+echo ""
+echo "  # Assuming floresta.sigs is cloned at ./floresta.sigs"
+echo "  cp SHA256SUMS SHA256SUMS.asc ./floresta.sigs/${VERSION}/${SIGNER}/"
+echo "  cd ./floresta.sigs"
+echo "  git checkout -b attest/${VERSION}/${SIGNER}"
+echo "  git add ${VERSION}/${SIGNER}/"
+echo "  git commit -m \"sign: attest ${VERSION} as ${SIGNER}\""
+echo "  gh pr create"

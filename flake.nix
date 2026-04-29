@@ -44,6 +44,9 @@
                   ./lib/floresta-service-vm-test.nix
                   ./flake.nix
                   ./flake.lock
+                  ./contrib/floresta-attest
+                  ./contrib/floresta-verify
+                  ./contrib/import-keys.sh
                 ];
               };
               hooks = {
@@ -51,6 +54,7 @@
                 deadnix.enable = true;
                 nil.enable = true;
                 statix.enable = true;
+                shellcheck.enable = true;
               };
             };
 
@@ -69,8 +73,32 @@
           packages =
             let
               florestaBuild = import ./lib/floresta-build.nix { inherit pkgs; };
+              crossX86 = florestaBuild.forPkgs pkgs.pkgsCross.gnu64;
+              crossAarch64 = florestaBuild.forPkgs pkgs.pkgsCross.aarch64-multiplatform;
+              mingwPkgs = import inputs.nixpkgs {
+                inherit system;
+                crossSystem.config = "x86_64-w64-mingw32";
+                overlays = [
+                  (_final: prev: {
+                    boost = prev.boost.override {
+                      # boost_stacktrace_from_exception fails to compile on mingw
+                      # (it relies on POSIX-specific unwinding features)
+                      extraB2Args = [ "boost.stacktrace.from_exception=off" ];
+                    };
+                  })
+                  (_final: prev: {
+                    rhash = prev.rhash.overrideAttrs {
+                      # rhash produces broken symlinks when cross-compiled for mingw32
+                      # (librhash.so -> librhash.so.1 but only .dll is built)
+                      dontCheckForBrokenSymlinks = true;
+                    };
+                  })
+                ];
+              };
+              crossWindows = florestaBuild.forPkgs mingwPkgs;
             in
             {
+              # Native packages — available on all systems
               inherit (florestaBuild)
                 florestad
                 floresta-cli
@@ -78,18 +106,38 @@
                 floresta-debug
                 default
                 ;
+            }
+            // pkgs.lib.optionalAttrs (system != "x86_64-linux") {
+              # Cross-compiled x86_64-linux from any other host
+              florestad-x86_64-linux = crossX86.florestad;
+              floresta-cli-x86_64-linux = crossX86.floresta-cli;
+            }
+            // pkgs.lib.optionalAttrs (system != "aarch64-linux") {
+              # Cross-compiled aarch64-linux from any other host
+              florestad-aarch64-linux = crossAarch64.florestad;
+              floresta-cli-aarch64-linux = crossAarch64.floresta-cli;
+            }
+            // {
+              # Cross-compiled Windows x86_64 from any host
+              florestad-x86_64-windows = crossWindows.florestad;
+              floresta-cli-x86_64-windows = crossWindows.floresta-cli;
             };
+
+          formatter = pkgs.nixfmt-classic;
 
           devShells.default = pkgs.mkShell {
             inherit (self'.checks.nix-sanity-check) shellHook;
             packages = with pkgs; [
               nil
-              nixfmt
+              nixfmt-classic
               just
+              shellcheck
+              shfmt
+              nix-output-monitor
+              cachix
             ];
           };
         };
-
     };
 
   inputs = {
