@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# floresta-verify — verify multi-builder attestations for a release.
+#
+# PURPOSE
+#
+# This script verifies that a Floresta release was built reproducibly by
+# checking that multiple independent builders all produced identical binaries.
+# It performs two phases:
+#
+#   Phase 1: Signature verification
+#   - Import trusted GPG keys from contrib/trusted-keys/
+#   - Verify each signer's SHA256SUMS.asc signature
+#   - Reject signatures from unknown keys
+#
+#   Phase 2: Consensus checking
+#   - Compare hashes across all valid signers
+#   - For each binary, confirm all signers report the same hash
+#   - Any mismatch indicates a problem
+#
+# USAGE
+#
+#   ./floresta-verify <version> [path-to-floresta.sigs]
+#
+# Arguments:
+#   version            - The release tag, e.g. v0.9.0
+#   path-to-floresta.sigs - Path to floresta.sigs clone (default: ./floresta.sigs)
+#
+# TRUSTED KEYS
+#
+# Only signatures from keys listed in contrib/trusted-keys/ are accepted.
+# This prevents anyone from adding attestations without authorization.
+#
+# EXIT CODES
+#
+#   0 - All signatures valid and all signers agree
+#   1 - No valid signatures, or hash mismatches detected
+
+set -euo pipefail
+
+VERSION="${1:?Usage: $0 <version> [path-to-floresta.sigs]}"
+SIGS_REPO="${2:-./floresta.sigs}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TRUSTED_KEYS_DIR="${SCRIPT_DIR}/trusted-keys"
+
+VERSION_DIR="${SIGS_REPO}/${VERSION}"
+
+if [ ! -d "${VERSION_DIR}" ]; then
+    echo "ERROR: no attestations found at ${VERSION_DIR}"
+    echo "Make sure floresta.sigs is cloned at ${SIGS_REPO}"
+    exit 1
+fi
+
+# ---- Prepare temporary GPG home ----
+#
+# We import trusted keys into a temporary keyring so we don't pollute
+# the user's main keyring. This lets us verify against only the trusted set.
+
+GNUPGHOME=$(mktemp -d)
+export GNUPGHOME
+trap 'rm -rf "${GNUPGHOME}"' EXIT
+
+if [ -d "${TRUSTED_KEYS_DIR}" ] && ls "${TRUSTED_KEYS_DIR}"/*.asc &>/dev/null; then
+    echo "Importing trusted keys..."
+    for key in "${TRUSTED_KEYS_DIR}"/*.asc; do
+        gpg --quiet --import "${key}" 2>/dev/null
+    done
+    echo ""
+else
+    echo "WARNING: no trusted keys found in ${TRUSTED_KEYS_DIR}"
+    echo "All signature checks will fail."
+    echo ""
+fi
+
+# ---- Phase 1: Verify signatures ----
+
+echo "Checking signatures for ${VERSION}..."
+VALID_SIGNERS=()
+INVALID_SIGNERS=()
+
+for signer_dir in "${VERSION_DIR}"/*/; do
+    [ -d "${signer_dir}" ] || continue
+    SIGNER=$(basename "${signer_dir}")
+    SUMS="${signer_dir}/SHA256SUMS"
+    SIG="${signer_dir}/SHA256SUMS.asc"
+
+    if [ ! -f "${SUMS}" ] || [ ! -f "${SIG}" ]; then
+        echo "  SKIP ${SIGNER}: missing SHA256SUMS or SHA256SUMS.asc"
+        continue
+    fi
+
+    if gpg --status-fd 1 --verify "${SIG}" "${SUMS}" 2>/dev/null | grep -q VALIDSIG; then
+        FINGERPRINT=$(gpg --status-fd 1 --verify "${SIG}" "${SUMS}" 2>/dev/null | awk '/^\[GNUPG:\] VALIDSIG/{print $3}')
+        echo "  OK   ${SIGNER} (key: ${FINGERPRINT})"
+        VALID_SIGNERS+=("${SIGNER}")
+    else
+        echo "  FAIL ${SIGNER}: bad signature or untrusted key"
+        INVALID_SIGNERS+=("${SIGNER}")
+    fi
+done
+
+echo ""
+
+if [ ${#VALID_SIGNERS[@]} -eq 0 ]; then
+    echo "ERROR: no valid signatures found."
+    exit 1
+fi
+
+echo "Valid signers: ${#VALID_SIGNERS[@]}"
+echo ""
+
+# ---- Phase 2: Check consensus across all signers ----
+#
+# Take the first signer's hashes as reference, then verify all other
+# signers report identical hashes for every binary. This catches:
+#   - Different compiler versions producing different binaries
+#   - Source code tampering after the tagged commit
+#   - Builder mistakes or misconfiguration
+
+echo "Checking consensus..."
+REFERENCE_SIGNER="${VALID_SIGNERS[0]}"
+REFERENCE_SUMS="${VERSION_DIR}/${REFERENCE_SIGNER}/SHA256SUMS"
+ALL_AGREE=true
+
+while IFS= read -r line; do
+    # Skip empty lines and comments
+    [[ -z "${line}" || "${line}" == \#* ]] && continue
+
+    HASH=$(echo "${line}" | awk '{print $1}')
+    BINARY=$(echo "${line}" | awk '{print $2}')
+    AGREE_COUNT=1
+
+    # Compare against every other valid signer
+    for signer in "${VALID_SIGNERS[@]:1}"; do
+        THEIR_HASH=$(grep "  ${BINARY}\$" "${VERSION_DIR}/${signer}/SHA256SUMS" |
+            awk '{print $1}' || true)
+        if [ "${HASH}" = "${THEIR_HASH}" ]; then
+            AGREE_COUNT=$((AGREE_COUNT + 1))
+        else
+            echo "  MISMATCH ${BINARY}:"
+            echo "    ${REFERENCE_SIGNER} = ${HASH}"
+            echo "    ${signer}    = ${THEIR_HASH}"
+            ALL_AGREE=false
+        fi
+    done
+
+    echo "  OK   ${BINARY}  ${HASH}  (${AGREE_COUNT}/${#VALID_SIGNERS[@]} agree)"
+done <"${REFERENCE_SUMS}"
+
+echo ""
+if [ "${ALL_AGREE}" = true ]; then
+    echo "All ${#VALID_SIGNERS[@]} signers agree. Release verified."
+else
+    echo "WARNING: hash mismatches detected. Review carefully."
+    exit 1
+fi
