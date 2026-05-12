@@ -1,0 +1,155 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: Build and Attest
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  attestations: write
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.artifact_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Native Linux ──────────────────────────────────────────
+          - runner: ubuntu-latest
+            attr: florestad
+            binary: florestad
+            artifact_name: florestad-x86_64-linux-gnu
+          - runner: ubuntu-latest
+            attr: floresta-cli
+            binary: floresta-cli
+            artifact_name: floresta-cli-x86_64-linux-gnu
+          - runner: ubuntu-24.04-arm
+            attr: florestad
+            binary: florestad
+            artifact_name: florestad-aarch64-linux-gnu
+          - runner: ubuntu-24.04-arm
+            attr: floresta-cli
+            binary: floresta-cli
+            artifact_name: floresta-cli-aarch64-linux-gnu
+
+          # ── Native macOS (aarch64 only — no x86_64 GH runner) ────
+          - runner: macos-14
+            attr: florestad
+            binary: florestad
+            artifact_name: florestad-aarch64-apple-darwin
+          - runner: macos-14
+            attr: floresta-cli
+            binary: floresta-cli
+            artifact_name: floresta-cli-aarch64-apple-darwin
+
+          # ── Cross: Windows x86_64 (from x86_64-linux) ────────────
+          - runner: ubuntu-latest
+            attr: florestad-x86_64-windows
+            binary: florestad.exe
+            artifact_name: florestad-x86_64-w64-mingw32.exe
+          - runner: ubuntu-latest
+            attr: floresta-cli-x86_64-windows
+            binary: floresta-cli.exe
+            artifact_name: floresta-cli-x86_64-w64-mingw32.exe
+
+          # ── Cross: Android aarch64 (from x86_64-linux) ───────────
+          - runner: ubuntu-latest
+            attr: florestad-aarch64-android
+            binary: florestad
+            artifact_name: florestad-aarch64-linux-android
+          - runner: ubuntu-latest
+            attr: floresta-cli-aarch64-android
+            binary: floresta-cli
+            artifact_name: floresta-cli-aarch64-linux-android
+          - runner: ubuntu-latest
+            attr: libfloresta-aarch64-android
+            binary: lib
+            artifact_name: libfloresta-aarch64-linux-android.tar.gz
+
+          # ── Cross: Android armv7a (from x86_64-linux) ────────────
+          - runner: ubuntu-latest
+            attr: florestad-armv7a-android
+            binary: florestad
+            artifact_name: florestad-armv7a-linux-androideabi
+          - runner: ubuntu-latest
+            attr: floresta-cli-armv7a-android
+            binary: floresta-cli
+            artifact_name: floresta-cli-armv7a-linux-androideabi
+          - runner: ubuntu-latest
+            attr: libfloresta-armv7a-android
+            binary: lib
+            artifact_name: libfloresta-armv7a-linux-androideabi.tar.gz
+
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: floresta-flake
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+
+      - name: Build ${{ matrix.attr }}
+        run: nix build -L .#${{ matrix.attr }}
+
+      - name: Collect artifact
+        run: |
+          mkdir -p results
+          if [ "${{ matrix.binary }}" = "lib" ]; then
+            tar -czf results/${{ matrix.artifact_name }} -C result lib
+          else
+            cp -L result/bin/${{ matrix.binary }} results/${{ matrix.artifact_name }}
+            chmod +x results/${{ matrix.artifact_name }}
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: results/${{ matrix.artifact_name }}
+
+  attest-and-release:
+    name: Attest and Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: results
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd results
+          sha256sum * | sort -k2 > SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            results/*
+            !results/SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            results/*
