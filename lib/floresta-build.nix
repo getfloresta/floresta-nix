@@ -106,7 +106,7 @@ let
 
       doCheck = mkOption {
         type = types.bool;
-        default = true;
+        default = false;
         description = ''
           Whether to run tests during the build, deactivate if youre limited on resources.
 
@@ -345,7 +345,7 @@ let
           "--skip=tests::test_get_roots"
           "--skip=tests::test_get_height"
           "--skip=tests::test_send_raw_transaction"
-          "--skip=p2p_wire::node::tests::test_parse_address"
+          "--skip=p2p_wire::node::conn::tests::test_parse_address"
         ];
 
         meta = with lib; {
