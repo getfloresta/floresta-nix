@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: Sync upstream master
+
+on:
+  schedule:
+    - cron: "0 */2 * * *" # Every 2 hours
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    name: Update floresta-master input
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Update floresta-master flake input
+        run: nix flake update floresta-master
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if git diff --quiet flake.lock; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            rev=$(nix flake metadata --json | jq -r '.locks.nodes["floresta-master"].locked.rev' | head -c 12)
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "rev=$rev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create pull request
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: auto/update-floresta-master
+          commit-message: "chore: sync floresta-master to ${{ steps.diff.outputs.rev }}"
+          title: "chore: sync floresta-master to ${{ steps.diff.outputs.rev }}"
+          body: |
+            Automated sync of the `floresta-master` flake input
+            (`getfloresta/Floresta/android_patched_bitcoinkernel`).
+
+            This updates the upstream Floresta pin, which affects:
+            - All default native packages (`florestad`, `floresta-cli`, `libfloresta`)
+            - All Android cross-compilation targets
+          labels: dependencies
+          delete-branch: true

@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: Android
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  prebuilt:
+    name: Prebuilt libbitcoinkernel
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android \
+            /opt/ghc /usr/local/share/boost /opt/hostedtoolcache
+          sudo docker image prune --all --force
+
+      - uses: actions/checkout@v6
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: floresta-flake
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+          skipPush: ${{ github.event_name == 'pull_request' }}
+
+      - name: Build prebuilt bundle
+        run: nix build -L .#android-prebuilt
+
+  floresta:
+    name: ${{ matrix.attr }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        attr:
+          - florestad-aarch64-android
+          - floresta-cli-aarch64-android
+          - libfloresta-aarch64-android
+          - florestad-armv7a-android
+          - floresta-cli-armv7a-android
+          - libfloresta-armv7a-android
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android \
+            /opt/ghc /usr/local/share/boost /opt/hostedtoolcache
+          sudo docker image prune --all --force
+
+      - uses: actions/checkout@v6
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: floresta-flake
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+          skipPush: ${{ github.event_name == 'pull_request' }}
+
+      - name: Build ${{ matrix.attr }}
+        run: nix build -L .#${{ matrix.attr }}
