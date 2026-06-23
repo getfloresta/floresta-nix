@@ -19,6 +19,10 @@ _package-binary package system:
     chmod +x artifacts/{{ package }}-{{ system }}
     echo "✅ Packaged {{ package }}-{{ system }}"
 
+# Build the Android prebuilt libbitcoinkernel bundle (x86_64 hosts only)
+android-prebuilt:
+    nix build -L .#android-prebuilt
+
 # Build and package the binaries.
 build-and-package-all:
     #!/usr/bin/env bash
