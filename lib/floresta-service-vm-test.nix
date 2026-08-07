@@ -3,10 +3,7 @@
 # NixOS VM integration test for floresta-service.nix
 # Boots a VM, starts the floresta service, and verifies systemd integration.
 # Linux only.
-{
-  pkgs,
-  flakeInputs,
-}:
+{ pkgs, flakeInputs }:
 
 let
   # Dummy florestad that listens briefly so systemd considers it started
