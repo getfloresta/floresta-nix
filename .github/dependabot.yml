@@ -9,3 +9,7 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # floresta-master is tracked separately by the update-master workflow
+    # for more frequent syncing.
+    ignore:
+      - dependency-name: "floresta-master"
