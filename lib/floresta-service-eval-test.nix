@@ -3,10 +3,7 @@
 # Evaluation-based tests for floresta-service.nix
 # Verifies that every NixOS option correctly maps to CLI flags in ExecStart.
 # Works on all platforms (no VM required).
-{
-  pkgs,
-  flakeInputs,
-}:
+{ pkgs, flakeInputs }:
 
 let
   inherit (pkgs) lib;

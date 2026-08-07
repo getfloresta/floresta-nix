@@ -27,9 +27,9 @@
         in
         {
           packages = {
-            florestad = florestaBuild.build { packageName = "florestad"; };
-            floresta-cli = florestaBuild.build { packageName = "floresta-cli"; };
-            default = florestaBuild.build { packageName = "all"; };
+            florestad = florestaBuild.mkFloresta { packageName = "florestad"; };
+            floresta-cli = florestaBuild.mkFloresta { packageName = "floresta-cli"; };
+            default = florestaBuild.mkFloresta { packageName = "all"; };
           };
         }
       );

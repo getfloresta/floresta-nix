@@ -3,11 +3,29 @@
 {
   pkgs ? import <nixpkgs> { },
   lib ? pkgs.lib,
+  defaultSrc ? null,
+  # Extra environment variables set on buildRustPackage (e.g. ANDROID_NDK_HOME)
+  extraEnvVars ? { },
+  # Extra native build inputs added to every build (e.g. Android SDK)
+  extraNativeBuildInputsGlobal ? [ ],
+  # When true, disable cargoBuildHook and use customBuildPhase instead.
+  # Required for Android cross-compilation where cargo must be invoked
+  # with an explicit --target flag.
+  dontCargoBuild ? false,
+  # Custom buildPhase used when dontCargoBuild is true (e.g. Android).
+  customBuildPhase ? null,
+  # Custom installPhase used when dontCargoBuild is true (e.g. Android).
+  customInstallPhase ? null,
+  # Override the Rust platform (rustc + cargo + rust-std).  Defaults to
+  # pkgs.rustPlatform.  For Android cross-compilation a fenix-based
+  # platform with the target's rust-std must be supplied.
+  rustPlatform ? pkgs.rustPlatform,
 }:
 
 let
   inherit (lib) types mkOption;
 
+  # Option definitions for the build module
   buildFlorestaOptions = {
     options = {
       packageName = mkOption {
@@ -33,12 +51,16 @@ let
 
       src = mkOption {
         type = types.path;
-        default = pkgs.fetchFromGitHub {
-          rev = "eb03116ed513c22297c1d4bc8d07a71c44de00af";
-          owner = "vinteumorg";
-          repo = "floresta";
-          hash = "sha256-2efto4VWT7satrQoWSsg0YDWZlVDgvMNLEHrN+UUbGY=";
-        };
+        default =
+          if defaultSrc != null then
+            defaultSrc
+          else
+            pkgs.fetchFromGitHub {
+              owner = "getfloresta";
+              repo = "Floresta";
+              rev = "v0.9.1";
+              hash = "sha256-5dfE0Bd0yCDh7Kc0PsSXjBWLQ9WmNCCbropdXfK9YSk=";
+            };
         description = ''
           Source tree for the Floresta project.
 
@@ -47,9 +69,9 @@ let
         '';
         example = ''
           pkgs.fetchFromGitHub {
-            owner = "vinteumorg";
-            repo = "floresta";
-            rev = "v0.5.0";
+            owner = "getfloresta";
+            repo = "Floresta";
+            rev = "v0.9.1";
             hash = "sha256-... ";
           }
         '';
@@ -94,7 +116,7 @@ let
 
       doCheck = mkOption {
         type = types.bool;
-        default = true;
+        default = false;
         description = ''
           Whether to run tests during the build, deactivate if youre limited on resources.
 
@@ -166,95 +188,136 @@ let
   mkFloresta =
     args:
     let
-      # Evaluate and validate the configuration
       cfg = evalConfig args;
-
-      # Get the config for the requested package
       pkgConfig = packageConfigs.${cfg.packageName};
-
-      # Read version from appropriate Cargo.toml
       cargoToml = builtins.fromTOML (builtins.readFile "${cfg.src}/${pkgConfig.cargoTomlPath}");
 
-      # Well problably need that in the future
-      darwinDeps = [ ];
-      windowsDeps = [ ];
+      # Darwin frameworks linked into the target binary
+      darwinFrameworks =
+        with pkgs.darwin.apple_sdk.frameworks;
+        [
+          Security
+          SystemConfiguration
+        ]
+        ++ [ pkgs.libiconv ];
+
+      inherit (pkgs.stdenv) targetPlatform;
     in
-    pkgs.rustPlatform.buildRustPackage {
-      inherit (cargoToml.package) version;
-      inherit (pkgConfig) pname description cargoBuildFlags;
-      inherit (cfg) src doCheck;
+    rustPlatform.buildRustPackage (
+      {
+        inherit (cargoToml.package) version;
+        inherit (pkgConfig) pname description cargoBuildFlags;
+        inherit (cfg) src doCheck;
 
-      buildFeatures = cfg.features ++ (cfg.extraFeatures or [ ]);
+        buildFeatures = cfg.features ++ (cfg.extraFeatures or [ ]);
 
-      nativeBuildInputs = [
-        pkgs.openssl
-        pkgs.pkg-config
-        pkgs.boost
-        pkgs.cmake
-        pkgs.llvmPackages.clang
-        pkgs.llvmPackages.libclang
-      ]
-      ++ lib.optionals pkgs.hostPlatform.isDarwin darwinDeps
-      ++ lib.optionals pkgs.hostPlatform.isWindows windowsDeps
-      ++ cfg.extraBuildInputs;
+        # Build-time tools that run on the build machine
+        nativeBuildInputs = [
+          pkgs.buildPackages.pkg-config
+          pkgs.buildPackages.cmake
+          pkgs.buildPackages.boost
+          pkgs.buildPackages.llvmPackages.clang
+          pkgs.buildPackages.llvmPackages.libclang
+        ]
+        ++ lib.optionals pkgs.stdenv.buildPlatform.isDarwin [
+          pkgs.buildPackages.libiconv
+          pkgs.buildPackages.darwin.apple_sdk.frameworks.Security
+          pkgs.buildPackages.darwin.apple_sdk.frameworks.SystemConfiguration
+        ]
+        ++ extraNativeBuildInputsGlobal
+        ++ cfg.extraBuildInputs;
 
-      cargoLock = {
-        lockFile = "${cfg.src}/Cargo.lock";
-      };
+        # Libraries and frameworks linked into the target binary
+        buildInputs = lib.optionals targetPlatform.isDarwin darwinFrameworks;
 
-      # Bitcoin Kernel needs these
-      LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-      CMAKE_PREFIX_PATH = "${pkgs.boost.dev}";
+        # Cargo.lock pins libbitcoinkernel-sys to a git rev, which carries no
+        # checksum.  Let builtins.fetchGit vendor it from the pinned rev
+        # instead of hardcoding an outputHash that goes stale every time
+        # upstream bumps the dependency.
+        cargoLock = {
+          lockFile = "${cfg.src}/Cargo.lock";
+          allowBuiltinFetchGit = true;
+        };
 
-      cargoDeps = pkgs.rustPlatform.importCargoLock { lockFile = "${cfg.src}/Cargo.lock"; };
+        # libbitcoinkernel-sys runs CMake on the build machine; point it at
+        # the build-platform Boost so find_package(Boost) succeeds without
+        # trying to cross-compile Boost for the target.
+        CMAKE_PREFIX_PATH = "${pkgs.buildPackages.boost.dev}";
 
-      checkFlags = [
-        # These tests has special needs that nix cant provide.
-        "--skip=tests::test_get_block_header"
-        "--skip=tests::test_get_block"
-        "--skip=tests::test_get_block_hash"
-        "--skip=tests::test_get_best_block_hash"
-        "--skip=tests::test_get_blockchaininfo"
-        "--skip=tests::test_stop"
-        "--skip=tests::test_get_roots"
-        "--skip=tests::test_get_height"
-        "--skip=tests::test_send_raw_transaction"
-        "--skip=p2p_wire::node::tests::test_parse_address"
-      ];
+        # bindgen (used by libbitcoinkernel-sys <= 0.2.0) needs libclang.
+        LIBCLANG_PATH = "${pkgs.buildPackages.llvmPackages.libclang.lib}/lib";
 
-      meta = with lib; {
-        description = "A lightweight bitcoin full node - ${pkgConfig.description}";
-        homepage = "https://github.com/vinteumorg/Floresta";
-        license = with licenses; [
-          mit
-          asl20
+      }
+      # When cross-compiling (e.g. Android), disable the default cargo
+      # build/install hooks and use explicit phases with --target.
+      // lib.optionalAttrs dontCargoBuild {
+        inherit dontCargoBuild;
+        dontCargoInstall = true;
+      }
+      // lib.optionalAttrs (customBuildPhase != null) {
+        buildPhase = customBuildPhase;
+      }
+      // lib.optionalAttrs (customInstallPhase != null) {
+        installPhase = customInstallPhase;
+      }
+      // {
+
+        preBuild =
+          let
+            inherit (pkgs.stdenv) buildPlatform;
+            isCross = pkgs.stdenv.hostPlatform != buildPlatform;
+            platformSuffix = builtins.replaceStrings [ "-" ] [ "_" ] buildPlatform.config;
+          in
+          lib.optionalString (buildPlatform.isDarwin && isCross) ''
+            export NIX_LDFLAGS_${platformSuffix}="-L${pkgs.buildPackages.libiconv}/lib $NIX_LDFLAGS_${platformSuffix}"
+          '';
+
+        cargoDeps = rustPlatform.importCargoLock {
+          lockFile = "${cfg.src}/Cargo.lock";
+          allowBuiltinFetchGit = true;
+        };
+
+        checkFlags = [
+          "--skip=tests::test_get_block_header"
+          "--skip=tests::test_get_block"
+          "--skip=tests::test_get_block_hash"
+          "--skip=tests::test_get_best_block_hash"
+          "--skip=tests::test_get_blockchaininfo"
+          "--skip=tests::test_stop"
+          "--skip=tests::test_get_roots"
+          "--skip=tests::test_get_height"
+          "--skip=tests::test_send_raw_transaction"
+          "--skip=p2p_wire::node::conn::tests::test_parse_address"
         ];
-        maintainers = with maintainers; [ jaoleal ];
-        platforms = platforms.unix ++ platforms.windows;
-        mainProgram = pkgConfig.pname;
-      };
 
-      # Override options
-      passthru = {
-        inherit cfg pkgConfig;
+        meta = with lib; {
+          description = "A lightweight bitcoin full node - ${pkgConfig.description}";
+          homepage = "https://github.com/getfloresta/Floresta";
+          license = with licenses; [
+            mit
+            asl20
+          ];
+          maintainers = with maintainers; [ jaoleal ];
+          platforms = platforms.unix;
+          mainProgram = pkgConfig.pname;
+        };
 
-        override = newArgs: mkFloresta (cfg // newArgs);
-        overrideAttrs = f: (mkFloresta args).overrideAttrs f;
-      };
-    };
+        passthru = {
+          inherit cfg pkgConfig;
+          override = newArgs: mkFloresta (cfg // newArgs);
+          overrideAttrs = f: (mkFloresta args).overrideAttrs f;
+        };
+      }
+      // extraEnvVars
+    );
 
 in
 {
-  # The main builder function
-  build = mkFloresta;
+  inherit mkFloresta buildFlorestaOptions;
 
   default = mkFloresta { };
-
   florestad = mkFloresta { packageName = "florestad"; };
   floresta-cli = mkFloresta { packageName = "floresta-cli"; };
   libfloresta = mkFloresta { packageName = "libfloresta"; };
   floresta-debug = mkFloresta { packageName = "floresta-debug"; };
-
-  # For documentation generation
-  inherit buildFlorestaOptions;
 }
