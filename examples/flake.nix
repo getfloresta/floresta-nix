@@ -5,7 +5,7 @@
 # Used in CI to verify the consumer integration interface.
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
     floresta-nix.url = "path:../";
   };

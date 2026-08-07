@@ -13,7 +13,7 @@ let
     sleep infinity
   '';
 
-  test = pkgs.nixosTest {
+  test = pkgs.testers.nixosTest {
     name = "floresta-service-vm-test";
 
     nodes.machine =

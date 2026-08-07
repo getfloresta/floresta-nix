@@ -192,14 +192,11 @@ let
       pkgConfig = packageConfigs.${cfg.packageName};
       cargoToml = builtins.fromTOML (builtins.readFile "${cfg.src}/${pkgConfig.cargoTomlPath}");
 
-      # Darwin frameworks linked into the target binary
-      darwinFrameworks =
-        with pkgs.darwin.apple_sdk.frameworks;
-        [
-          Security
-          SystemConfiguration
-        ]
-        ++ [ pkgs.libiconv ];
+      # Darwin libraries linked into the target binary.  The Security and
+      # SystemConfiguration frameworks used to be listed here explicitly;
+      # since the nixpkgs Darwin SDK rework they ship with the default
+      # `apple-sdk` that the Darwin stdenv already provides.
+      darwinInputs = [ pkgs.libiconv ];
 
       inherit (pkgs.stdenv) targetPlatform;
     in
@@ -221,14 +218,12 @@ let
         ]
         ++ lib.optionals pkgs.stdenv.buildPlatform.isDarwin [
           pkgs.buildPackages.libiconv
-          pkgs.buildPackages.darwin.apple_sdk.frameworks.Security
-          pkgs.buildPackages.darwin.apple_sdk.frameworks.SystemConfiguration
         ]
         ++ extraNativeBuildInputsGlobal
         ++ cfg.extraBuildInputs;
 
-        # Libraries and frameworks linked into the target binary
-        buildInputs = lib.optionals targetPlatform.isDarwin darwinFrameworks;
+        # Libraries linked into the target binary
+        buildInputs = lib.optionals targetPlatform.isDarwin darwinInputs;
 
         # Cargo.lock pins libbitcoinkernel-sys to a git rev, which carries no
         # checksum.  Let builtins.fetchGit vendor it from the pinned rev
