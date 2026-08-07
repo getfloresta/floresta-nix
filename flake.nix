@@ -67,7 +67,7 @@
               flakeInputs = inputs;
             };
           }
-          // pkgs.lib.optionalAttrs pkgs.hostPlatform.isLinux {
+          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             service-vm-test = import ./lib/floresta-service-vm-test.nix {
               inherit pkgs;
               flakeInputs = inputs;
@@ -151,7 +151,7 @@
             inherit (self'.checks.nix-sanity-check) shellHook;
             packages = with pkgs; [
               nil
-              nixfmt-classic
+              nixfmt
               just
               nix-output-monitor
               cachix
@@ -161,7 +161,7 @@
     };
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
     flake-parts.url = "github:hercules-ci/flake-parts";
 
