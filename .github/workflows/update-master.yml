@@ -40,7 +40,7 @@ jobs:
 
       - name: Create pull request
         if: steps.diff.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: auto/update-floresta-master
           commit-message: "chore: sync floresta-master to ${{ steps.diff.outputs.rev }}"
