@@ -63,23 +63,62 @@ jobs:
       - name: Run VM integration test
         run: nix build -L .#checks.x86_64-linux.service-vm-test
 
+  # Every package of every host: each (release, distro) pair lib/targets.nix
+  # lists. Read off the flake, so a host, distro or release added there is
+  # built here with no edit to this file — beyond a runner for a new host.
+  matrix:
+    name: Distro matrix
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.eval.outputs.include }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Evaluate the packages of every host
+        id: eval
+        run: |
+          include=$(nix eval --json .#packages --apply '
+            packages:
+            let
+              runners = {
+                x86_64-linux = "ubuntu-latest";
+                aarch64-linux = "ubuntu-24.04-arm";
+                aarch64-darwin = "macos-14";
+              };
+            in
+            builtins.concatLists (builtins.attrValues (builtins.mapAttrs (host: ps:
+              map (package: {
+                inherit host package;
+                runner = runners.${host};
+                attr = "packages.${host}.${package}";
+              }) (builtins.attrNames ps)
+            ) packages))
+          ')
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+
   build:
-    name: ${{ matrix.package }} (${{ matrix.system }})
-    needs: nix-sanity-check
+    name: ${{ matrix.package }} (${{ matrix.host }})
+    needs: [nix-sanity-check, matrix]
     strategy:
       fail-fast: false
       matrix:
-        # One build of the workspace is the whole release, so there is
-        # nothing to split across jobs.
-        package: [master]
-        system: [x86_64-linux, x86_64-darwin, aarch64-linux, aarch64-darwin]
-    runs-on: >-
-      ${{
-        contains(matrix.system, 'darwin') && 'macos-14' ||
-        matrix.system == 'aarch64-linux' && 'ubuntu-24.04-arm' ||
-        'ubuntu-latest'
-      }}
+        include: ${{ fromJSON(needs.matrix.outputs.include) }}
+    runs-on: ${{ matrix.runner }}
     steps:
+      # The Android NDK alone is several GB.
+      - name: Free disk space
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android \
+            /opt/ghc /usr/local/share/boost /opt/hostedtoolcache
+          sudo docker image prune --all --force
+
       - uses: actions/checkout@v7
 
       - uses: cachix/install-nix-action@v31
@@ -95,4 +134,4 @@ jobs:
           skipPush: ${{ github.event_name == 'pull_request' }}
 
       - name: Build ${{ matrix.package }}
-        run: nix build -L .#${{ matrix.package }}
+        run: nix build -L '.#${{ matrix.attr }}'

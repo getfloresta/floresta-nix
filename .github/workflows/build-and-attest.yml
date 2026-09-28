@@ -1,12 +1,18 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# Builds every release artifact, records GitHub build provenance for them,
-# and publishes them to a GitHub Release.
+# Builds every distro of one release on the hosts below, records GitHub
+# build provenance for them, and publishes them to a GitHub Release. The
+# release is the dispatch input, or the pushed tag without its `v`
+# (v0.9.1 -> 0.9.1): the packages built are packages.<host>.*-v0_9_1.
 #
 # Artifact names match what the attestation manifest uses, so the published
 # SHA256SUMS can be compared line for line against the attestations in
-# contrib/sigs/. The triples below must therefore stay in step with
-# lib/attestation.nix, which derives them from the Rust target of each build.
+# contrib/sigs/: `<file>-<triple>`, the triple read off each package's
+# rustTarget, as lib/attestation.nix does.
+#
+# One host per distro: two copies of one artifact cannot both be published.
+# Both Linux hosts list x86_64-linux-static (commented out for now); only
+# one of them may build it here once it is enabled.
 
 name: Build and Attest
 
@@ -14,38 +20,30 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Floresta release to build, as lib/targets.nix names it (e.g. 0.9.1)"
+        required: true
 
 permissions:
   contents: read
 
+env:
+  RELEASE: ${{ inputs.release || github.ref_name }}
+
 jobs:
   build:
-    name: ${{ matrix.triple }}
+    name: ${{ matrix.host }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # ── Native ───────────────────────────────────────────────
           - runner: ubuntu-latest
-            attr: master
-            triple: x86_64-unknown-linux-gnu
+            host: x86_64-linux
           - runner: ubuntu-24.04-arm
-            attr: master
-            triple: aarch64-unknown-linux-gnu
+            host: aarch64-linux
           - runner: macos-14
-            attr: master
-            triple: aarch64-apple-darwin
-
-          # ── Android cross (x86_64-linux host) ────────────────────
-          - runner: ubuntu-latest
-            attr: master.aarch64-android
-            triple: aarch64-linux-android
-          - runner: ubuntu-latest
-            attr: master.armv7a-android
-            triple: armv7-linux-androideabi
-          - runner: ubuntu-latest
-            attr: master.x86_64-android
-            triple: x86_64-linux-android
+            host: aarch64-darwin
 
     runs-on: ${{ matrix.runner }}
     steps:
@@ -69,34 +67,42 @@ jobs:
           name: floresta-flake
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
 
-      - name: Build and collect ${{ matrix.triple }}
+      - name: Build and collect ${{ env.RELEASE }} on ${{ matrix.host }}
         run: |
           set -euo pipefail
+          release="${RELEASE#v}"
+          suffix="-v${release//./_}"
+          root=".#packages.${{ matrix.host }}"
           mkdir -p results
-          echo "::group::nix build .#${{ matrix.attr }}"
-          nix build -L ".#${{ matrix.attr }}" --out-link result-release
-          echo "::endgroup::"
 
-          # One build of the release carries every artifact for this target.
-          # Which files those are is read off the result, matching what
-          # lib/attestation.nix hashes.
+          packages=$(nix eval --raw "$root" --apply 'ps: toString (builtins.attrNames ps)')
           found=0
-          for dir in bin lib; do
-            [ -d "result-release/${dir}" ] || continue
-            for artifact in "result-release/${dir}"/*; do
-              [ -f "${artifact}" ] || continue
-              cp -L "${artifact}" "results/$(basename "${artifact}")-${{ matrix.triple }}"
-              found=$((found + 1))
+          for pkg in $packages; do
+            [[ "$pkg" == *"$suffix" ]] || continue
+            echo "::group::nix build $root.$pkg"
+            out=$(nix build -L --no-link --print-out-paths "$root.$pkg")
+            echo "::endgroup::"
+            triple=$(nix eval --raw "$root.$pkg.rustTarget")
+
+            # Which files a distro publishes is read off the result,
+            # matching what lib/attestation.nix hashes.
+            for dir in bin lib; do
+              [ -d "${out}/${dir}" ] || continue
+              for artifact in "${out}/${dir}"/*; do
+                [ -f "${artifact}" ] || continue
+                cp -L "${artifact}" "results/$(basename "${artifact}")-${triple}"
+                found=$((found + 1))
+              done
             done
           done
-          [ "${found}" -gt 0 ] || { echo "error: ${{ matrix.attr }} produced no files under bin/ or lib/" >&2; exit 1; }
+          [ "${found}" -gt 0 ] || { echo "error: no package of ${{ matrix.host }} ends in ${suffix}" >&2; exit 1; }
           chmod -R u+w results
           ls -l results
 
-      - name: Upload ${{ matrix.triple }}
+      - name: Upload ${{ matrix.host }}
         uses: actions/upload-artifact@v7
         with:
-          name: floresta-${{ matrix.triple }}
+          name: floresta-${{ matrix.host }}
           path: results/*
           if-no-files-found: error
 
