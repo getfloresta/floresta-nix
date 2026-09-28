@@ -14,6 +14,7 @@ use std::process::{exit, Command, Stdio};
 
 const GPG: &str = "@gnupg@/bin/gpg";
 const VERSIONS: &str = "@versions@";
+const SYSTEM: &str = "@system@";
 
 fn usage() -> String {
     let mut text = String::from(
@@ -89,11 +90,13 @@ fn run(version: &str, signer: &str) -> Result<(), String> {
 }
 
 // Builds the release's manifest derivation. Logs stream to stderr; stdout
-// is the manifest's store path.
+// is the manifest's store path. The version is quoted: it has dots.
 fn build_manifest(version: &str) -> Result<String, String> {
     let output = Command::new("nix")
         .args(["build", "-L", "--no-link", "--print-out-paths"])
-        .arg(format!(".#attestation-manifest-{version}"))
+        .arg(format!(
+            ".#legacyPackages.{SYSTEM}.attestation-manifests.\"{version}\""
+        ))
         .stderr(Stdio::inherit())
         .output()
         .map_err(|e| format!("cannot run nix: {e}"))?;
