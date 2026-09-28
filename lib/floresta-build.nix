@@ -4,12 +4,12 @@
   pkgs ? import <nixpkgs> { },
   lib ? pkgs.lib,
   # Source tree every build defaults to; standalone imports fall back to
-  # the latest release tag.
-  defaultSrc ? pkgs.fetchFromGitHub {
-    owner = "getfloresta";
-    repo = "Floresta";
-    rev = "v0.9.1";
-    hash = "sha256-5dfE0Bd0yCDh7Kc0PsSXjBWLQ9WmNCCbropdXfK9YSk=";
+  # the v0.9.1 tag.  Fetched at evaluation time rather than by a
+  # derivation: the version is read off its Cargo.toml, and a derivation
+  # cannot be built under `nix flake check --no-build`.
+  defaultSrc ? builtins.fetchTarball {
+    url = "https://github.com/getfloresta/Floresta/archive/v0.9.1.tar.gz";
+    sha256 = "sha256-5dfE0Bd0yCDh7Kc0PsSXjBWLQ9WmNCCbropdXfK9YSk=";
   },
   # Extra environment variables set on buildRustPackage (e.g. ANDROID_NDK_HOME)
   extraEnvVars ? { },
