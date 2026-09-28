@@ -322,7 +322,6 @@ let
         passthru = {
           inherit cfg pkgConfig;
           override = newArgs: mkFloresta (cfg // newArgs);
-          overrideAttrs = f: (mkFloresta args).overrideAttrs f;
         };
       }
       // extraEnvVars
