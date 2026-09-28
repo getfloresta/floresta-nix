@@ -95,7 +95,7 @@ let
         builtins.replaceStrings [ "-" ] [ "_" ] (nativePkgs.lib.toUpper rustTarget)
       }";
     in
-    import ./floresta-build.nix {
+    (import ./floresta-build.nix {
       pkgs = nativePkgs;
       inherit (nativePkgs) lib;
       defaultSrc = masterSrc;
@@ -104,60 +104,58 @@ let
       # The ABI is what tells these builds apart, so it belongs in the
       # package name itself.
       pnameSuffix = "-${abi}";
+    }).mkFloresta
+      {
+        # Explicit cargo build with --target so all crates (including
+        # proc-macro / build-script crates) are compiled correctly; it
+        # replaces the cargoBuildHook, which does not handle --target.
+        # $cargoBuildFlags is set by buildRustPackage from the Nix attribute.
+        buildPhase = ''
+          runHook preBuild
+          cargo build \
+            $cargoBuildFlags \
+            --target ${rustTarget} \
+            --offline \
+            --release
+          runHook postBuild
+        '';
 
-      # Disable the default cargoBuildHook / cargoInstallHook — they
-      # don't handle cross-compilation via --target properly.
-      dontCargoBuild = true;
+        # Install binaries / libraries from the target-specific output dir.
+        installPhase = ''
+          runHook preInstall
+          mkdir -p $out/bin $out/lib
+          local _releaseDir=target/${rustTarget}/release
+          # Copy binaries (florestad, floresta-cli)
+          for bin in florestad floresta-cli; do
+            if [ -f "$_releaseDir/$bin" ]; then
+              cp "$_releaseDir/$bin" $out/bin/
+            fi
+          done
+          # Copy libraries (libfloresta)
+          for lib in "$_releaseDir"/libfloresta*.a "$_releaseDir"/libfloresta*.so; do
+            if [ -f "$lib" ]; then
+              cp "$lib" $out/lib/
+            fi
+          done
+          runHook postInstall
+        '';
 
-      # Explicit cargo build with --target so all crates (including
-      # proc-macro / build-script crates) are compiled correctly.
-      # $cargoBuildFlags is set by buildRustPackage from the Nix attribute.
-      customBuildPhase = ''
-        runHook preBuild
-        cargo build \
-          $cargoBuildFlags \
-          --target ${rustTarget} \
-          --offline \
-          --release
-        runHook postBuild
-      '';
+        extraEnvVars = {
+          ANDROID_HOME = "${sdk}/libexec/android-sdk";
+          ANDROID_NDK_HOME = ndk;
+          ANDROID_NDK_ROOT = ndk;
+          CARGO_BUILD_TARGET = rustTarget;
+          "${cargoTargetPrefix}_LINKER" = ndkLinker;
 
-      # Install binaries / libraries from the target-specific output dir.
-      customInstallPhase = ''
-        runHook preInstall
-        mkdir -p $out/bin $out/lib
-        local _releaseDir=target/${rustTarget}/release
-        # Copy binaries (florestad, floresta-cli)
-        for bin in florestad floresta-cli; do
-          if [ -f "$_releaseDir/$bin" ]; then
-            cp "$_releaseDir/$bin" $out/bin/
-          fi
-        done
-        # Copy libraries (libfloresta)
-        for lib in "$_releaseDir"/libfloresta*.a "$_releaseDir"/libfloresta*.so; do
-          if [ -f "$lib" ]; then
-            cp "$lib" $out/lib/
-          fi
-        done
-        runHook postInstall
-      '';
-
-      extraEnvVars = {
-        ANDROID_HOME = "${sdk}/libexec/android-sdk";
-        ANDROID_NDK_HOME = ndk;
-        ANDROID_NDK_ROOT = ndk;
-        CARGO_BUILD_TARGET = rustTarget;
-        "${cargoTargetPrefix}_LINKER" = ndkLinker;
-
-        # Tell the `cc` crate (used by secp256k1-sys etc.) to use the NDK
-        # clang and llvm-ar for C code compiled for the Android target.
-        # Without this, cc::Build picks the host compiler and produces
-        # x86_64 object files that the aarch64/armv7 linker rejects.
-        "CC_${builtins.replaceStrings [ "-" ] [ "_" ] rustTarget}" = ndkClang;
-        "AR_${builtins.replaceStrings [ "-" ] [ "_" ] rustTarget}" = "${ndkToolchain}/bin/llvm-ar";
+          # Tell the `cc` crate (used by secp256k1-sys etc.) to use the NDK
+          # clang and llvm-ar for C code compiled for the Android target.
+          # Without this, cc::Build picks the host compiler and produces
+          # x86_64 object files that the aarch64/armv7 linker rejects.
+          "CC_${builtins.replaceStrings [ "-" ] [ "_" ] rustTarget}" = ndkClang;
+          "AR_${builtins.replaceStrings [ "-" ] [ "_" ] rustTarget}" = "${ndkToolchain}/bin/llvm-ar";
+        };
+        extraBuildInputs = [ sdk ];
       };
-      extraNativeBuildInputsGlobal = [ sdk ];
-    };
   # Cross-compiled Floresta for Android — requires the NDK cross
   # toolchain, which nixpkgs only supports on x86_64 hosts.
 in
@@ -168,10 +166,8 @@ lib.optionalAttrs ndkSupported (
     (
       abi: rustTarget:
       # Carry the target the build was compiled for, so consumers can ask the
-      # package instead of inferring it from the attribute name.  Attached
-      # with // rather than overrideAttrs: floresta-build.nix replaces
-      # passthru.overrideAttrs with a self-recursive definition.
-      (mkAndroidBuild abi rustTarget).default // { inherit rustTarget; }
+      # package instead of inferring it from the attribute name.
+      mkAndroidBuild abi rustTarget // { inherit rustTarget; }
     )
     {
       aarch64-android = "aarch64-linux-android";
