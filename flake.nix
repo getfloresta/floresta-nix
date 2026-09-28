@@ -19,6 +19,13 @@
         "x86_64-darwin"
         "aarch64-darwin"
       ];
+
+      pkgsFor =
+        system:
+        import inputs.nixpkgs {
+          inherit system;
+          overlays = [ inputs.rust-overlay.overlays.default ];
+        };
     in
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = supportedSystems;
@@ -27,6 +34,11 @@
         nixosModules = {
           floresta = import ./lib/floresta-service.nix;
           default = inputs.self.nixosModules.floresta;
+        };
+
+        lib = {
+          mkFlorestaDistro =
+            system: (import ./lib/mkFlorestaDistro.nix { pkgs = pkgsFor system; }).mkFlorestaDistro;
         };
       };
 
@@ -100,7 +112,7 @@
           };
         in
         {
-          _module.args.pkgs = import inputs.nixpkgs { inherit system; };
+          _module.args.pkgs = pkgsFor system;
 
           checks = {
             nix-sanity-check = inputs.pre-commit-hooks.lib.${system}.run {
@@ -110,6 +122,7 @@
                   ./lib/android-outputs.nix
                   ./lib/attestation.nix
                   ./lib/floresta-build.nix
+                  ./lib/mkFlorestaDistro.nix
                   ./lib/floresta-service.nix
                   ./lib/floresta-service-eval-test.nix
                   ./lib/floresta-service-vm-test.nix
@@ -177,6 +190,11 @@
 
     pre-commit-hooks = {
       url = "github:cachix/git-hooks.nix";
+    };
+
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
 
     fenix = {

@@ -13,11 +13,10 @@
   },
   # Override the Rust platform (rustc + cargo + rust-std).  Defaults to
   # pkgs.rustPlatform.  A cross build must supply one whose toolchain
-  # carries the target's rust-std (android-outputs.nix does).
+  # carries the target's rust-std (mkFlorestaDistro.nix does).
   rustPlatform ? pkgs.rustPlatform,
-  # Appended to every package name produced by this import, to tell cross
-  # variants apart in the store: an Android import passes "-aarch64-android"
-  # and gets `floresta-aarch64-android`.
+  # Appended to every package name produced by this import, to tell distros
+  # apart in the store: mkFlorestaDistro passes "-<distro>".
   pnameSuffix ? "",
 }:
 
