@@ -4,36 +4,37 @@ Nix packaging for [Floresta](https://github.com/getfloresta/Floresta).
 
 ## Packages
 
-Every package this flake exports is a release: one build of the Floresta
-workspace, which installs everything that release publishes — `florestad`
-(the full node daemon) and `floresta-cli` (its command-line interface) under
-`bin/`, the `libfloresta` shared and static libraries under `lib/`.
+Every package is `florestad` and `floresta-cli` built for one _distro_ — one place they run.
+Each host exposes only the distros it knows how to build, and each distro
+only exists from the release it first built from.
 
-| Package  | Description                                       |
-| -------- | ------------------------------------------------- |
-| `master` | The current Floresta — the pinned upstream branch |
-| `v0_9_1` | The v0.9.1 release tag                            |
-| `v0_9_0` | The v0.9.0 release tag                            |
+| Distro            | Runs on             | Built from     | Since  |
+| ----------------- | ------------------- | -------------- | ------ |
+| `x86_64-linux`    | Linux x86_64        | x86_64-linux   | any    |
+| `aarch64-linux`   | Linux aarch64       | aarch64-linux  | any    |
+| `aarch64-darwin`  | macOS Apple Silicon | aarch64-darwin | any    |
+| `aarch64-android` | Android arm64-v8a   | x86_64-linux   | 0.10.0 |
+
+A distro is dynamically linked unless its name ends in `-static`. Only
+static binaries run outside Nix or NixOS: a dynamic one loads its
+interpreter and libraries from `/nix/store`.
+
+`packages` holds every release of every distro the host builds, named
+`florestad-<distro>-v<release>` with the release's dots as underscores:
 
 ```sh
-nix build .#master                # everything master publishes
-nix build .#v0_9_1                # the same, as the v0.9.1 tag ships it
-nix build .#master.aarch64-android
+nix build .#florestad-aarch64-darwin-v0_9_1
 ./result/bin/florestad
+nix build .#florestad-aarch64-android-v0_10_0
+nix flake show                    # which host builds which package
 ```
 
-Master also cross-compiles for Android; those targets hang off it as
-`master.<abi>` — see [PLATFORMS.md](PLATFORMS.md).
+Every package is written out, per host, in
+[`lib/targets.nix`](lib/targets.nix); see [PLATFORMS.md](PLATFORMS.md) for
+Android.
 
-To build a single component instead of the whole workspace, use the build
-library's `mkFloresta` directly — see below.
-
-### Supported platforms
-
-| Platform | Architecture                            |
-| -------- | --------------------------------------- |
-| Linux    | x86_64, aarch64                         |
-| macOS    | x86_64 (Intel), aarch64 (Apple Silicon) |
+To build `libfloresta`, or a different set, use the
+build library's `mkFloresta` directly — see below.
 
 ### Using in your own flake
 
@@ -49,7 +50,7 @@ Add this flake as an input and import the build library:
       florestaBuild = import "${floresta-nix}/lib/floresta-build.nix" { inherit pkgs; };
     in {
       packages.x86_64-linux.florestad = florestaBuild.mkFloresta {
-        packageName = "florestad";
+        packageSet = [ "florestad" ];
       };
     };
 }
@@ -61,19 +62,22 @@ See [`examples/flake.nix`](examples/flake.nix) for a multi-platform example usin
 
 `florestaBuild.mkFloresta` accepts:
 
-| Option             | Type            | Default            | Description                                                                               |
-| ------------------ | --------------- | ------------------ | ----------------------------------------------------------------------------------------- |
-| `packageName`      | enum            | `"all"`            | `"all"` (the whole workspace), or one of `"florestad"`, `"floresta-cli"`, `"libfloresta"` |
-| `profile`          | enum            | `"release"`        | `"release"` or `"debug"` cargo profile                                                    |
-| `src`              | path            | Latest release tag | Override the Floresta source tree                                                         |
-| `features`         | list of str     | `[]`               | Additional cargo features to enable                                                       |
-| `extraBuildInputs` | list of package | `[]`               | Extra build-time dependencies                                                             |
-| `doCheck`          | bool            | `false`            | Run tests during build                                                                    |
+| Option             | Type                 | Default                          | Description                                                          |
+| ------------------ | -------------------- | -------------------------------- | -------------------------------------------------------------------- |
+| `packageSet`       | list of enum         | `[ "florestad" "floresta-cli" ]` | What to build, from `"florestad"`, `"floresta-cli"`, `"libfloresta"` |
+| `profile`          | enum                 | `"release"`                      | `"release"` or `"debug"` cargo profile                               |
+| `src`              | path                 | Latest release tag               | Override the Floresta source tree                                    |
+| `features`         | list of str          | `[]`                             | Additional cargo features to enable                                  |
+| `extraBuildInputs` | list of package      | `[]`                             | Extra build-time dependencies                                        |
+| `extraEnvVars`     | attrs of str/package | `{}`                             | Environment variables set on the build                               |
+| `buildPhase`       | lines or null        | `null`                           | Replaces the cargo build hook (e.g. Android, cargo with `--target`)  |
+| `installPhase`     | lines or null        | `null`                           | Replaces the cargo install hook                                      |
+| `doCheck`          | bool                 | `false`                          | Run tests during build                                               |
 
-The library also exports `default` (`mkFloresta { }` — the whole workspace at
-the release profile) and `debug` (the same at the debug profile). Building a
-single component compiles the shared dependency graph on its own, so ask for
-`"all"` unless you really want just the one.
+The library also exports `default` (`mkFloresta { }` — florestad and
+floresta-cli at the release profile) and `debug` (the same at the debug
+profile). The whole `packageSet` builds in one cargo invocation, so its
+shared dependency graph compiles once.
 
 ## NixOS Service Module
 
@@ -120,18 +124,18 @@ The service includes systemd hardening (sandboxing, restricted syscalls, private
 
 Releases are attested by independent builders. Each builder compiles the same source, hashes the resulting artifacts, and signs the hash manifest with their GPG key. The signed manifests live in [`contrib/sigs/`](contrib/sigs); anyone can then check that every trusted signer reported identical hashes.
 
-Release artifacts are named `<file>-<target triple>` — `florestad-x86_64-unknown-linux-gnu`, `libfloresta.dylib-aarch64-apple-darwin`, and so on — the same names used in the manifests, so a downloaded binary can be checked directly against them.
+Release artifacts are named `<file>-<target triple>` — `florestad-x86_64-unknown-linux-musl`, `florestad-aarch64-apple-darwin`, and so on — the same names used in the manifests, so a downloaded binary can be checked directly against them.
 
-An attestation covers one tagged release and hashes exactly what it installs. Master is not attested, and the Android cross builds exist only on master. `nix run .#releases` lists the versions.
+An attestation covers one release and hashes exactly what its distros install on the signer's host. `nix run .#releases` lists the versions.
 
 [`lib/attestation.nix`](lib/attestation.nix) holds the whole mechanism:
 
-|                                              |                                                                                                                            |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `nix run .#releases`                         | Lists the releases that can be attested                                                                                    |
-| `nix run .#attest -- <version> <signer>`     | Builds the manifest and signs it with your key into `contrib/sigs/<version>/`                                              |
-| `nix run .#verify`                           | Verifies every collected signature, then the consensus between signers                                                     |
-| `nix build .#attestation-manifest-<version>` | Just the manifest: builds every target of that release for your host, hashes the artifacts, writes the sorted `SHA256SUMS` |
+|                                                                         |                                                                                                                            |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `nix run .#releases`                                                    | Lists the releases that can be attested                                                                                    |
+| `nix run .#attest -- <version> <signer>`                                | Builds the manifest and signs it with your key into `contrib/sigs/<version>/`                                              |
+| `nix run .#verify`                                                      | Verifies every collected signature, then the consensus between signers                                                     |
+| `nix build '.#legacyPackages.<host>.attestation-manifests."<version>"'` | Just the manifest: builds every distro of that release for your host, hashes the artifacts, writes the sorted `SHA256SUMS` |
 
 The `<version>` is one string throughout: it picks the source tree, names the manifest, and names the directory the signature is filed under. `attest` rejects a version this flake does not pin.
 
@@ -145,7 +149,7 @@ nix run .#verify     # or: just verify
 
 Artifacts marked `PARTIAL` are not a failure: they are covered by some signers and not others, because each signer hashes the artifacts their own host builds — a macOS signer cannot attest the Linux binaries, nor the other way around (see [PLATFORMS.md](PLATFORMS.md)).
 
-You do not have to sign anything to check a release: `nix build .#attestation-manifest-<version>` produces the manifest on its own, so you can confirm you reproduce the same hashes.
+You do not have to sign anything to check a release: `nix build '.#legacyPackages.<host>.attestation-manifests."<version>"'` produces the manifest on its own, so you can confirm you reproduce the same hashes.
 
 ### Becoming a signer
 
@@ -158,10 +162,10 @@ gpg --armor --export <KEYID> > contrib/trusted-keys/<yourname>.asc
 2. Build and sign the release:
 
 ```bash
-nix run .#attest -- v0_9_1 yourname
+nix run .#attest -- 0.9.1 yourname
 ```
 
-This writes `contrib/sigs/v0_9_1/yourname/SHA256SUMS` and `SHA256SUMS.asc`. Expect a long build: every target is compiled from source. Set `GPG_KEY` if your keyring holds more than one secret key.
+This writes `contrib/sigs/0.9.1/yourname/SHA256SUMS` and `SHA256SUMS.asc`. Expect a long build: every target is compiled from source. Set `GPG_KEY` if your keyring holds more than one secret key.
 
 3. Check what you just wrote with `nix run .#verify` — it reads your working tree, so it sees the signature before you commit it.
 4. Commit both files and open a PR.
@@ -170,4 +174,4 @@ Releases published by CI also carry [GitHub build provenance](https://docs.githu
 
 ## CI
 
-All packages are built across every supported platform on each push and PR. Builds are cached on [Cachix](https://app.cachix.org/cache/floresta-flake), dependencies are tracked by Dependabot, and a weekly scheduled build catches upstream breakage early.
+Every package of every host — each release of each distro [`lib/targets.nix`](lib/targets.nix) lists — is built on each push and PR. Builds are cached on [Cachix](https://app.cachix.org/cache/floresta-flake), dependencies are tracked by Dependabot, and a weekly scheduled build catches upstream breakage early.

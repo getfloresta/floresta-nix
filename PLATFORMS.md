@@ -7,21 +7,23 @@ toolchain. Available on **x86_64-linux** only: the prebuilt toolchain is
 the linux-x86_64 one, and nixpkgs' androidndk-pkgs does not map aarch64
 build hosts at all.
 
-These are cross targets of the master tree, so they hang off the `master`
-release. Each is one build of the workspace for that ABI, carrying the same
-artifacts the native build does: `florestad` and `floresta-cli` under `bin/`,
-the `libfloresta` shared and static libraries under `lib/`.
+Each ABI is a distro in [`lib/targets.nix`](lib/targets.nix), building
+`florestad` and `floresta-cli` from Floresta 0.10.0 on — the first release whose
+libbitcoinkernel-sys cross-compiles for Android.
 
-| Package                  | Target               |
-| ------------------------ | -------------------- |
-| `master.aarch64-android` | aarch64 (arm64-v8a)  |
-| `master.armv7a-android`  | armv7a (armeabi-v7a) |
-| `master.x86_64-android`  | x86_64 (emulator)    |
+| Distro            | Target               | Listed by a host |
+| ----------------- | -------------------- | ---------------- |
+| `aarch64-android` | aarch64 (arm64-v8a)  | x86_64-linux     |
+| `armv7a-android`  | armv7a (armeabi-v7a) | not yet          |
+| `x86_64-android`  | x86_64 (emulator)    | not yet          |
 
 ```bash
-nix build .#master.aarch64-android
-ls result/lib
+nix build .#florestad-aarch64-android-v0_10_0
+ls result/bin
 ```
+
+The ABIs not built yet are commented out under `packages.x86_64-linux` in
+`lib/targets.nix`; uncommenting one publishes it.
 
 ---
 
